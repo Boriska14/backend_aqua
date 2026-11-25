@@ -1,0 +1,236 @@
+{
+  "_comment": "FICTIF — Jeu de 20 cas de test purement synthétiques pour valider le moteur de verdict. Ne reflète aucun seuil officiel NC 207.",
+  "cases": [
+    {
+      "id": "FICTIF-01",
+      "description": "Tous paramètres conformes dans les bornes",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 6, "maxValue": 8, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_B", "type": "BACTERIOLOGIQUE", "minValue": null, "maxValue": null, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [
+        { "parameterCode": "PARAM_A", "value": 7.0 },
+        { "parameterCode": "PARAM_B", "presence": false }
+      ],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-02",
+      "description": "Paramètre non critique au-dessus du max",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 6, "maxValue": 8, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_A", "value": 8.5 }],
+      "expectedVerdict": "NON_CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-03",
+      "description": "Paramètre critique bactériologique présent -> NON_CONFORME_GRAVE",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 6, "maxValue": 8, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_B", "type": "BACTERIOLOGIQUE", "minValue": null, "maxValue": null, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [
+        { "parameterCode": "PARAM_A", "value": 7.0 },
+        { "parameterCode": "PARAM_B", "presence": true }
+      ],
+      "expectedVerdict": "NON_CONFORME_GRAVE",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-04",
+      "description": "Paramètre critique physico-chimique hors borne -> NON_CONFORME_GRAVE",
+      "seuils": [
+        { "parameterCode": "PARAM_C", "type": "PHYSICO_CHIMIQUE", "minValue": null, "maxValue": 10, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_C", "value": 12 }],
+      "expectedVerdict": "NON_CONFORME_GRAVE",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-05",
+      "description": "Valeurs exactement égales aux bornes min et max incluses",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 5, "maxValue": 10, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_D", "type": "PHYSICO_CHIMIQUE", "minValue": 5, "maxValue": 10, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [
+        { "parameterCode": "PARAM_A", "value": 5 },
+        { "parameterCode": "PARAM_D", "value": 10 }
+      ],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-06",
+      "description": "Borne min nulle ignorée, max respecté",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": null, "maxValue": 50, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_A", "value": 0 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-07",
+      "description": "Borne max nulle ignorée, min respecté",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": null, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_A", "value": 250 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-08",
+      "description": "Paramètre obligatoire manquant détecté",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": 10, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_E", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 5, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_A", "value": 5 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": ["PARAM_E"]
+    },
+    {
+      "id": "FICTIF-09",
+      "description": "Paramètre optionnel manquant ne bloque pas",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": 10, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_OPT", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 5, "isCritical": false, "isMandatory": false }
+      ],
+      "values": [{ "parameterCode": "PARAM_A", "value": 5 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-10",
+      "description": "Mixte non critique + critique -> NON_CONFORME_GRAVE prévaut",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": 5, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_C", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 2, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [
+        { "parameterCode": "PARAM_A", "value": 8 },
+        { "parameterCode": "PARAM_C", "value": 3 }
+      ],
+      "expectedVerdict": "NON_CONFORME_GRAVE",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-11",
+      "description": "Bactériologique non critique présent -> NON_CONFORME",
+      "seuils": [
+        { "parameterCode": "PARAM_B2", "type": "BACTERIOLOGIQUE", "minValue": null, "maxValue": null, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_B2", "presence": true }],
+      "expectedVerdict": "NON_CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-12",
+      "description": "Valeur inférieure au min non critique -> NON_CONFORME",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 5, "maxValue": 10, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_A", "value": 4.99 }],
+      "expectedVerdict": "NON_CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-13",
+      "description": "Valeur inférieure au min critique -> NON_CONFORME_GRAVE",
+      "seuils": [
+        { "parameterCode": "PARAM_C", "type": "PHYSICO_CHIMIQUE", "minValue": 5, "maxValue": 10, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "PARAM_C", "value": 4.9 }],
+      "expectedVerdict": "NON_CONFORME_GRAVE",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-14",
+      "description": "Codes paramètres insensibles à la casse et espaces",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": 10, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": " param_a ", "value": 5 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-15",
+      "description": "Paramètre inconnu en entrée ignoré",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": 10, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [
+        { "parameterCode": "PARAM_A", "value": 5 },
+        { "parameterCode": "EXTRA_UNKNOWN", "value": 9999 }
+      ],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-16",
+      "description": "Paramètre optionnel présent et non conforme critique -> NON_CONFORME_GRAVE",
+      "seuils": [
+        { "parameterCode": "PARAM_A", "type": "PHYSICO_CHIMIQUE", "minValue": 1, "maxValue": 10, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "PARAM_OPT_CRIT", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 1, "isCritical": true, "isMandatory": false }
+      ],
+      "values": [
+        { "parameterCode": "PARAM_A", "value": 5 },
+        { "parameterCode": "PARAM_OPT_CRIT", "value": 2 }
+      ],
+      "expectedVerdict": "NON_CONFORME_GRAVE",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-17",
+      "description": "Plusieurs paramètres obligatoires tous conformes",
+      "seuils": [
+        { "parameterCode": "P1", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 100, "isCritical": false, "isMandatory": true },
+        { "parameterCode": "P2", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 50, "isCritical": true, "isMandatory": true },
+        { "parameterCode": "P3", "type": "BACTERIOLOGIQUE", "minValue": null, "maxValue": null, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [
+        { "parameterCode": "P1", "value": 42 },
+        { "parameterCode": "P2", "value": 10 },
+        { "parameterCode": "P3", "presence": false }
+      ],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-18",
+      "description": "Valeur nulle pour un paramètre physico-chimique obligatoire compte comme manquant",
+      "seuils": [
+        { "parameterCode": "P1", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 10, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "P1", "value": null }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": ["P1"]
+    },
+    {
+      "id": "FICTIF-19",
+      "description": "Valeur négative autorisée si min négatif",
+      "seuils": [
+        { "parameterCode": "P_NEG", "type": "PHYSICO_CHIMIQUE", "minValue": -10, "maxValue": 10, "isCritical": false, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "P_NEG", "value": -5 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    },
+    {
+      "id": "FICTIF-20",
+      "description": "Zéro strictement inférieur au max zéro -> conforme",
+      "seuils": [
+        { "parameterCode": "P_ZERO", "type": "PHYSICO_CHIMIQUE", "minValue": 0, "maxValue": 0, "isCritical": true, "isMandatory": true }
+      ],
+      "values": [{ "parameterCode": "P_ZERO", "value": 0 }],
+      "expectedVerdict": "CONFORME",
+      "expectedMissing": []
+    }
+  ]
+}

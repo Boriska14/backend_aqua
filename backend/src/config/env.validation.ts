@@ -31,7 +31,12 @@ const envSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(50).default(10),
-  SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(30).max(3600).default(300),
+  SIGNED_URL_TTL_SECONDS: z.coerce
+    .number()
+    .int()
+    .min(30)
+    .max(3600)
+    .default(300),
 
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_ACCESS_TTL_SECONDS: z.coerce.number().int().min(60).default(900),
@@ -39,11 +44,18 @@ const envSchema = z.object({
   JWT_REFRESH_TTL_DAYS: z.coerce.number().int().min(1).default(30),
   TOTP_ENCRYPTION_KEY: z
     .string()
-    .regex(/^[0-9a-fA-F]{64}$/, 'TOTP_ENCRYPTION_KEY must be a 64-char hex string (32 bytes)'),
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'TOTP_ENCRYPTION_KEY must be a 64-char hex string (32 bytes)',
+    ),
   IP_HASH_SALT: z.string().min(16),
 
   DUPLICATE_RADIUS_M: z.coerce.number().positive().default(15),
-  PUBLIC_MAP_CLUSTER_THRESHOLD: z.coerce.number().int().positive().default(2000),
+  PUBLIC_MAP_CLUSTER_THRESHOLD: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(2000),
   PUBLIC_MAP_CACHE_TTL_SECONDS: z.coerce.number().int().min(0).default(60),
 });
 

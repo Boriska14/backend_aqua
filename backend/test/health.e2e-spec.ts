@@ -1,11 +1,38 @@
+process.env.NODE_ENV = 'test';
+process.env.PORT = '3000';
+process.env.APP_NAME = 'AquaSafe';
+process.env.CORS_ORIGINS = 'http://localhost:4200';
+process.env.PUBLIC_VERIFY_URL = 'http://localhost:4200/verify';
+process.env.LOG_LEVEL = 'silent';
+process.env.DEFAULT_LOCALE = 'fr';
+process.env.DATABASE_URL =
+  'postgresql://aquasafe:aquasafe@localhost:5432/aquasafe_test';
+process.env.S3_ENDPOINT = 'http://localhost:9000';
+process.env.S3_REGION = 'us-east-1';
+process.env.S3_BUCKET = 'aquasafe-documents';
+process.env.S3_ACCESS_KEY = 'minioadmin';
+process.env.S3_SECRET_KEY = 'minioadmin';
+process.env.S3_FORCE_PATH_STYLE = 'true';
+process.env.MAX_UPLOAD_MB = '10';
+process.env.SIGNED_URL_TTL_SECONDS = '300';
+process.env.JWT_ACCESS_SECRET =
+  'test-jwt-access-secret-minimum-32-characters-long';
+process.env.JWT_REFRESH_SECRET =
+  'test-jwt-refresh-secret-minimum-32-characters-long';
+process.env.TOTP_ENCRYPTION_KEY =
+  '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+process.env.IP_HASH_SALT = 'test-ip-hash-salt-min-16';
+
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../src/app.module';
 import { ProblemDetailsFilter } from '../src/common/filters/problem-details.filter';
 import { I18nService } from '../src/common/i18n/i18n.service';
 import { HealthService } from '../src/modules/health/health.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { AppModule } = require('../src/app.module');
 
 describe('Health (e2e)', () => {
   let app: INestApplication;
@@ -17,31 +44,6 @@ describe('Health (e2e)', () => {
   };
 
   beforeAll(async () => {
-    process.env.NODE_ENV = 'test';
-    process.env.PORT = '3000';
-    process.env.APP_NAME = 'AquaSafe';
-    process.env.CORS_ORIGINS = 'http://localhost:4200';
-    process.env.PUBLIC_VERIFY_URL = 'http://localhost:4200/verify';
-    process.env.LOG_LEVEL = 'silent';
-    process.env.DEFAULT_LOCALE = 'fr';
-    process.env.DATABASE_URL =
-      'postgresql://aquasafe:aquasafe@localhost:5432/aquasafe_test';
-    process.env.S3_ENDPOINT = 'http://localhost:9000';
-    process.env.S3_REGION = 'us-east-1';
-    process.env.S3_BUCKET = 'aquasafe-documents';
-    process.env.S3_ACCESS_KEY = 'minioadmin';
-    process.env.S3_SECRET_KEY = 'minioadmin';
-    process.env.S3_FORCE_PATH_STYLE = 'true';
-    process.env.MAX_UPLOAD_MB = '10';
-    process.env.SIGNED_URL_TTL_SECONDS = '300';
-    process.env.JWT_ACCESS_SECRET =
-      'test-jwt-access-secret-minimum-32-characters-long';
-    process.env.JWT_REFRESH_SECRET =
-      'test-jwt-refresh-secret-minimum-32-characters-long';
-    process.env.TOTP_ENCRYPTION_KEY =
-      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
-    process.env.IP_HASH_SALT = 'test-ip-hash-salt-min-16';
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
@@ -72,7 +74,9 @@ describe('Health (e2e)', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    if (app) {
+      await app.close();
+    }
   });
 
   it('GET /api/v1/health returns 200 when database and storage are up', async () => {

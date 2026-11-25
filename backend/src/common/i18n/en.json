@@ -14,11 +14,50 @@
   "health": {
     "degraded": "One or more critical services are unavailable."
   },
+  "guidance": {
+    "VERIFY_ACTIVE": "This certificate of conformity is active. Verify that the water point name and plaque number match.",
+    "VERIFY_SUSPENDED": "This certificate of conformity is temporarily suspended. Do not drink this water without treatment.",
+    "VERIFY_EXPIRED": "This certificate of conformity has expired. A new quality inspection is required.",
+    "VERIFY_WITHDRAWN": "This certificate of conformity has been permanently withdrawn. Do not consume this water.",
+    "VERIFY_UNKNOWN": "This QR code is unknown in the AquaSafe registry. You may submit a report."
+  },
   "errors": {
     "VALIDATION_ERROR": "Field validation error.",
-    "GRID_INACTIVE": "No active tariff grid is available.",
+    "INVALID_CREDENTIALS": "Invalid identifier or password.",
+    "ACCOUNT_LOCKED": "Account temporarily locked after repeated failures.",
+    "MFA_REQUIRED": "Two-factor authentication (2FA) verification is required.",
+    "MFA_INVALID": "Invalid 2FA code or MFA token.",
+    "MFA_ALREADY_ENABLED": "Two-factor authentication is already enabled.",
+    "MFA_NOT_ENROLLED": "TOTP enrollment must be initialized first.",
+    "OTP_RATE_LIMITED": "SMS code request limit reached for this phone number.",
+    "OTP_INVALID": "Invalid or expired access code.",
+    "OTP_MAX_ATTEMPTS": "Maximum verification attempts reached for this code.",
+    "REFRESH_INVALID": "Invalid or expired refresh token.",
+    "REFRESH_REUSE_DETECTED": "Refresh token reuse detected: token family revoked.",
+    "STRONG_AUTH_REQUIRED": "A recent 2FA verification (< 10 min) is required for this action.",
+    "FORBIDDEN_SCOPE": "Resource outside your authorized scope.",
     "OUVRAGE_DUPLICATE": "A similar water point already exists nearby or with this identifier.",
+    "INVALID_FILE_TYPE": "Actual file MIME type is not allowed.",
+    "FILE_TOO_LARGE": "File size exceeds maximum allowed limit.",
+    "DEMANDE_ACTIVE_EXISTS": "An active request already exists for this water point.",
+    "INVALID_TRANSITION": "State transition is not allowed.",
+    "GRID_INACTIVE": "No active tariff grid is available.",
+    "LABO_REQUIRED": "A referenced laboratory must be selected.",
+    "CONTRE_ANALYSE_SAME_LAB": "Counter-analysis must be performed by a different laboratory.",
+    "CONTRE_ANALYSE_DENIED": "Conditions for opening a counter-analysis are not met.",
     "PAYMENT_DUPLICATE": "This payment reference has already been recorded.",
-    "STRONG_AUTH_REQUIRED": "A recent 2FA verification is required for this action."
+    "PAYMENT_EXCEEDS_BALANCE": "Amount exceeds remaining balance due.",
+    "AGENT_NOT_HABILITATED": "Sampling agent accreditation is missing or expired.",
+    "AGENT_OUT_OF_SCOPE": "This municipality is outside your authorized scope.",
+    "NORME_LOCKED": "A published or archived standard cannot be modified.",
+    "NORME_MISSING_VALIDITY": "validityMonths is required to publish a standard.",
+    "NO_ACTIVE_NORME": "No published standard reference is active.",
+    "ANALYSE_LOCKED": "Analysis is locked; submit a reasoned amendment request.",
+    "ANALYSE_INCOMPLETE": "All mandatory parameters must be entered before submission.",
+    "PV_REQUIRED": "Signed analysis report (PV) must be uploaded before submission.",
+    "CERTIFICAT_NOT_CONFORME": "A certificate can only be issued for a compliant analysis.",
+    "CERTIFICAT_LIVE_EXISTS": "A live certificate already exists for this water point.",
+    "SIGNALEMENT_RATE_LIMITED": "Too many reports submitted from this address.",
+    "SUBVENTION_INSUFFICIENT_ENVELOPPE": "Insufficient balance in the selected subsidy envelope."
   }
 }

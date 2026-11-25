@@ -14,11 +14,50 @@
   "health": {
     "degraded": "Un ou plusieurs services critiques sont indisponibles."
   },
+  "guidance": {
+    "VERIFY_ACTIVE": "Ce certificat de conformité est actif. Vérifiez que le nom et le numéro de plaque correspondent à l'ouvrage.",
+    "VERIFY_SUSPENDED": "Ce certificat de conformité est temporairement suspendu. Abstenez-vous de consommer cette eau sans traitement.",
+    "VERIFY_EXPIRED": "Ce certificat de conformité est expiré. Un nouveau contrôle qualité est requis.",
+    "VERIFY_WITHDRAWN": "Ce certificat de conformité a été retiré définitivement. Ne consommez pas cette eau.",
+    "VERIFY_UNKNOWN": "Ce QR code est inconnu dans le registre AquaSafe. Vous pouvez déposer un signalement."
+  },
   "errors": {
     "VALIDATION_ERROR": "Erreur de validation des champs.",
-    "GRID_INACTIVE": "Aucune grille tarifaire active n'est disponible.",
+    "INVALID_CREDENTIALS": "Identifiant ou mot de passe invalide.",
+    "ACCOUNT_LOCKED": "Compte temporairement verrouillé suite à plusieurs échecs.",
+    "MFA_REQUIRED": "Validation par second facteur (2FA) requise.",
+    "MFA_INVALID": "Code 2FA ou jeton MFA invalide.",
+    "MFA_ALREADY_ENABLED": "La double authentification est déjà activée.",
+    "MFA_NOT_ENROLLED": "L'enrôlement TOTP doit être initialisé au préalable.",
+    "OTP_RATE_LIMITED": "Limite d'envoi de codes SMS atteinte pour ce numéro.",
+    "OTP_INVALID": "Code d'accès invalide ou expiré.",
+    "OTP_MAX_ATTEMPTS": "Nombre maximal de tentatives atteint pour ce code.",
+    "REFRESH_INVALID": "Jeton de rafraîchissement invalide ou expiré.",
+    "REFRESH_REUSE_DETECTED": "Réutilisation de jeton détectée : session révoquée par sécurité.",
+    "STRONG_AUTH_REQUIRED": "Une vérification 2FA récente (< 10 min) est requise pour cette action.",
+    "FORBIDDEN_SCOPE": "Ressource hors de votre périmètre d'habilitation.",
     "OUVRAGE_DUPLICATE": "Un ouvrage similaire existe déjà à proximité ou avec cet identifiant.",
+    "INVALID_FILE_TYPE": "Type de fichier réel non autorisé.",
+    "FILE_TOO_LARGE": "La taille du fichier dépasse la limite autorisée.",
+    "DEMANDE_ACTIVE_EXISTS": "Une demande active existe déjà pour cet ouvrage.",
+    "INVALID_TRANSITION": "Transition d'état non autorisée.",
+    "GRID_INACTIVE": "Aucune grille tarifaire active n'est disponible.",
+    "LABO_REQUIRED": "Un laboratoire référencé doit être sélectionné.",
+    "CONTRE_ANALYSE_SAME_LAB": "La contre-analyse doit être confiée à un laboratoire différent.",
+    "CONTRE_ANALYSE_DENIED": "Les conditions d'ouverture d'une contre-analyse ne sont pas réunies.",
     "PAYMENT_DUPLICATE": "Cette référence de paiement a déjà été enregistrée.",
-    "STRONG_AUTH_REQUIRED": "Une vérification 2FA récente est requise pour cette action."
+    "PAYMENT_EXCEEDS_BALANCE": "Le montant dépasse le solde restant dû.",
+    "AGENT_NOT_HABILITATED": "L'habilitation de l'agent préleveur est expirée ou absente.",
+    "AGENT_OUT_OF_SCOPE": "Cette commune ne fait pas partie de votre zone d'habilitation.",
+    "NORME_LOCKED": "Un référentiel publié ou archivé ne peut plus être modifié.",
+    "NORME_MISSING_VALIDITY": "La durée de validité (validityMonths) est obligatoire pour publier.",
+    "NO_ACTIVE_NORME": "Aucun référentiel de norme publié n'est actif.",
+    "ANALYSE_LOCKED": "Cette analyse est verrouillée ; demandez un amendement motivé.",
+    "ANALYSE_INCOMPLETE": "Tous les paramètres obligatoires doivent être saisis avant soumission.",
+    "PV_REQUIRED": "Le procès-verbal signé doit être téléversé avant la soumission.",
+    "CERTIFICAT_NOT_CONFORME": "Un certificat ne peut être émis que pour une analyse conforme.",
+    "CERTIFICAT_LIVE_EXISTS": "Un certificat vivant existe déjà pour cet ouvrage.",
+    "SIGNALEMENT_RATE_LIMITED": "Trop de signalements envoyés depuis cette adresse.",
+    "SUBVENTION_INSUFFICIENT_ENVELOPPE": "Solde insuffisant sur l'enveloppe de subvention sélectionnée."
   }
 }

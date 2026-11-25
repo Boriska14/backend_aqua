@@ -26,7 +26,10 @@ export class HealthService {
     this.s3Client = new S3Client({
       endpoint: this.configService.getOrThrow<string>('S3_ENDPOINT'),
       region: this.configService.getOrThrow<string>('S3_REGION'),
-      forcePathStyle: this.configService.get<boolean>('S3_FORCE_PATH_STYLE', true),
+      forcePathStyle: this.configService.get<boolean>(
+        'S3_FORCE_PATH_STYLE',
+        true,
+      ),
       credentials: {
         accessKeyId: this.configService.getOrThrow<string>('S3_ACCESS_KEY'),
         secretAccessKey: this.configService.getOrThrow<string>('S3_SECRET_KEY'),
