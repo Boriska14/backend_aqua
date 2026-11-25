@@ -1,0 +1,24 @@
+{
+  "pilot": {
+    "banner": "Pilot under validation"
+  },
+  "common": {
+    "validation_failed": "Submitted data is invalid.",
+    "internal_error": "An internal error occurred.",
+    "not_found": "Resource not found.",
+    "forbidden": "Access denied for this scope.",
+    "unauthorized": "Authentication required.",
+    "too_many_requests": "Too many requests. Please try again later.",
+    "conflict": "Conflict with current resource state."
+  },
+  "health": {
+    "degraded": "One or more critical services are unavailable."
+  },
+  "errors": {
+    "VALIDATION_ERROR": "Field validation error.",
+    "GRID_INACTIVE": "No active tariff grid is available.",
+    "OUVRAGE_DUPLICATE": "A similar water point already exists nearby or with this identifier.",
+    "PAYMENT_DUPLICATE": "This payment reference has already been recorded.",
+    "STRONG_AUTH_REQUIRED": "A recent 2FA verification is required for this action."
+  }
+}

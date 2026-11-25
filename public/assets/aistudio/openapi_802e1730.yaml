@@ -1,0 +1,1610 @@
+openapi: 3.0.3
+info:
+  title: AquaSafe API
+  version: 1.0.0
+  description: |
+    API REST v1 de la plateforme AquaSafe (pilote). Mention obligatoire : **Pilote en cours de validation**.
+
+    Conventions
+    - Base : `/api/v1`. JSON UTF-8. Horodatages ISO-8601 UTC. Montants en FCFA entiers.
+    - Auth : `Authorization: Bearer <access_token>` (JWT court, 15 min) + refresh token rotatif (cookie httpOnly ou corps).
+    - Erreurs : RFC 7807 (`application/problem+json`) avec un `code` métier stable (ex. `CERT_GRID_INACTIVE`).
+    - Pagination : `?page=1&limit=20` (limit max 100) -> `{ data, meta:{page,limit,total} }`. Listes toujours paginées (EN-04).
+    - Idempotence : en-tête `Idempotency-Key` (UUID) sur les POST de synchro hors-ligne et de paiement.
+    - Langue : `Accept-Language: fr|en`. Messages d'erreur et PDF localisés (EN-02).
+    - Permissions : contrôle côté serveur (RBAC + périmètre). Le champ `x-roles` de chaque opération liste les profils autorisés ;
+      « périmètre » = ses propres ouvrages (propriétaire), sa commune (agent communal), ses échantillons (labo).
+    - Actions sensibles (`x-strong-auth: true`) : second facteur TOTP récent (< 10 min) exigé + écriture AuditLog.
+servers:
+  - url: https://api.aquasafe.cm/api/v1
+    description: Production pilote (à confirmer)
+  - url: http://localhost:3000/api/v1
+    description: Local
+tags:
+  - { name: Auth }
+  - { name: Public }
+  - { name: Ouvrages }
+  - { name: Demandes }
+  - { name: Paiements }
+  - { name: Prelevements }
+  - { name: Analyses }
+  - { name: Certificats }
+  - { name: Validation MINEE }
+  - { name: Signalements }
+  - { name: Subventions }
+  - { name: Referentiels }
+  - { name: Annuaire }
+  - { name: Pilotage }
+  - { name: Admin }
+  - { name: Systeme }
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ───────────── AUTH ─────────────
+  /auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Demande d'un code d'accès par SMS (propriétaire)
+      description: Rate-limit 3/h/numéro. Crée le compte `PENDING` si le numéro est inconnu et `purpose=REGISTER`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone]
+              properties:
+                phone: { type: string, example: "+237670000000" }
+                purpose: { type: string, enum: [LOGIN, REGISTER], default: LOGIN }
+                fullName: { type: string, description: "Requis si REGISTER" }
+      responses:
+        "202": { description: Code envoyé (réponse identique que le compte existe ou non) }
+        "429": { $ref: "#/components/responses/TooMany" }
+  /auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Vérifie le code et ouvre la session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, code]
+              properties:
+                phone: { type: string }
+                code: { type: string, minLength: 6, maxLength: 6 }
+      responses:
+        "200": { $ref: "#/components/responses/Session" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Connexion des profils staff (MINEE, laboratoire, admin, agents)
+      description: Retourne `mfaRequired=true` + `mfaToken` si TOTP actif (obligatoire MINEE/labo/admin — EF-03).
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [identifier, password]
+              properties:
+                identifier: { type: string, description: "email ou téléphone" }
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Session ou défi MFA
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/Session" }
+                  - { $ref: "#/components/schemas/MfaChallenge" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "423": { description: Compte verrouillé temporairement }
+  /auth/2fa/verify:
+    post:
+      tags: [Auth]
+      summary: Valide le second facteur (TOTP ou code de secours)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mfaToken, code]
+              properties:
+                mfaToken: { type: string }
+                code: { type: string }
+                isBackupCode: { type: boolean, default: false }
+      responses:
+        "200": { $ref: "#/components/responses/Session" }
+        "401": { $ref: "#/components/responses/Problem" }
+  /auth/2fa/enroll:
+    post:
+      tags: [Auth]
+      summary: Démarre l'enrôlement TOTP (retourne secret + otpauth URI)
+      responses:
+        "200":
+          description: Secret à scanner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  otpauthUri: { type: string }
+                  secret: { type: string }
+  /auth/2fa/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirme l'enrôlement et génère 10 codes de secours (affichés une seule fois)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [code], properties: { code: { type: string } } }
+      responses:
+        "200":
+          description: Codes de secours
+          content:
+            application/json:
+              schema: { type: object, properties: { backupCodes: { type: array, items: { type: string } } } }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotation du refresh token
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { refreshToken: { type: string } } }
+      responses:
+        "200": { $ref: "#/components/responses/Session" }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Révoque le refresh token
+      responses:
+        "204": { description: Déconnecté }
+  /me:
+    get:
+      tags: [Auth]
+      summary: Profil courant, rôle, périmètre
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/User" } } } }
+    patch:
+      tags: [Auth]
+      summary: Met à jour nom, e-mail, langue
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: { fullName: { type: string }, email: { type: string, format: email }, locale: { type: string, enum: [fr, en] } }
+      responses:
+        "200": { description: OK }
+
+  # ───────────── PUBLIC (sans compte) ─────────────
+  /public/verify/{token}:
+    get:
+      tags: [Public]
+      summary: Vérification d'un QR (écran public, 5 cas)
+      description: |
+        Retourne TOUJOURS 200 avec `state` pour que l'écran affiche un message adapté ; 404 n'est jamais utilisé
+        (QR inconnu = `state=UNKNOWN`). Réponses `Cache-Control: no-store`. Rate-limit par IP.
+        Si le certificat a été remplacé, suit la chaîne `replacedBy` et renvoie le certificat courant (EF-22).
+        Jamais de propriétaire, téléphone ni montant (EF-24).
+      security: []
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string, minLength: 22, maxLength: 64 } }
+      responses:
+        "200": { description: Résultat, content: { application/json: { schema: { $ref: "#/components/schemas/PublicVerification" } } } }
+        "429": { $ref: "#/components/responses/TooMany" }
+  /public/ouvrages:
+    get:
+      tags: [Public]
+      summary: Recherche d'ouvrages (numéro, nom, commune)
+      security: []
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: communeId, in: query, schema: { type: integer } }
+        - { name: regionId, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/PublicStatus" } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { description: Liste, content: { application/json: { schema: { $ref: "#/components/schemas/PublicOuvragePage" } } } }
+  /public/ouvrages/{aquasafeNumber}:
+    get:
+      tags: [Public]
+      summary: Fiche publique (statut + période de validité uniquement)
+      security: []
+      parameters:
+        - { name: aquasafeNumber, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/PublicOuvrage" } } } }
+        "404": { $ref: "#/components/responses/Problem" }
+  /public/map/ouvrages:
+    get:
+      tags: [Public]
+      summary: Ouvrages pour la carte (GeoJSON FeatureCollection)
+      description: Par bbox ; clusterisé côté serveur au-delà de 2000 points. Cache 60 s.
+      security: []
+      parameters:
+        - { name: bbox, in: query, required: true, schema: { type: string, example: "9.5,3.7,12.0,4.2" }, description: "minLng,minLat,maxLng,maxLat" }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/PublicStatus" } }
+        - { name: type, in: query, schema: { $ref: "#/components/schemas/OuvrageType" } }
+        - { name: communeId, in: query, schema: { type: integer } }
+        - { name: controlledSince, in: query, schema: { type: string, format: date } }
+      responses:
+        "200": { description: GeoJSON, content: { application/geo+json: { schema: { type: object } } } }
+  /public/stats:
+    get:
+      tags: [Public]
+      summary: Compteurs publics (ouvrages certifiés, analyses, communes couvertes)
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ouvragesRecenses: { type: integer }
+                  ouvragesCertifies: { type: integer }
+                  analysesRealisees: { type: integer }
+                  communesCouvertes: { type: integer }
+                  updatedAt: { type: string, format: date-time }
+  /public/regions:
+    get: { tags: [Public], summary: Régions, security: [], responses: { "200": { description: OK } } }
+  /public/communes:
+    get:
+      tags: [Public]
+      summary: Communes (filtre région)
+      security: []
+      parameters: [{ name: regionId, in: query, schema: { type: integer } }]
+      responses: { "200": { description: OK } }
+  /public/signalements:
+    post:
+      tags: [Public]
+      summary: Dépose un signalement citoyen (sans compte)
+      description: |
+        Anti-abus : 5/h/IP + détection de rafales ; `clientUuid` pour synchro hors-ligne idempotente ; photos <= 3, WebP < 200 Ko
+        (envoyées en multipart ou référencées après `POST /public/signalements/{id}/photos`).
+        Routage automatique : commune = polygone contenant le point GPS ; gravité 3 => escalade MINEE.
+      security: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/SignalementCreate" }
+          application/json:
+            schema: { $ref: "#/components/schemas/SignalementCreate" }
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/SignalementReceipt" } } } }
+        "429": { $ref: "#/components/responses/TooMany" }
+  /public/signalements/{trackingNumber}:
+    get:
+      tags: [Public]
+      summary: Suivi d'un signalement par numéro
+      security: []
+      parameters: [{ name: trackingNumber, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: Statut (sans données personnelles) } }
+
+  # ───────────── OUVRAGES ─────────────
+  /ouvrages:
+    get:
+      tags: [Ouvrages]
+      summary: Liste des ouvrages dans le périmètre de l'appelant
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL, AGENT_PRELEVEUR, MINEE, ADMIN]
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: communeId, in: query, schema: { type: integer } }
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/OuvrageStatus" } }
+        - { name: type, in: query, schema: { $ref: "#/components/schemas/OuvrageType" } }
+        - { name: certExpiringBefore, in: query, schema: { type: string, format: date } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/OuvragePage" } } } }
+    post:
+      tags: [Ouvrages]
+      summary: Déclare un ouvrage
+      description: |
+        Doublon : même `sieId`, ou même type à < 15 m => 409 `OUVRAGE_DUPLICATE` avec l'ouvrage existant (EF-04).
+        Propriétaire : rattaché à lui-même. Agent communal : commune forcée à la sienne. Entreprise/ONG : `builderOrgId` forcé.
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL, MINEE]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/OuvrageCreate" } } }
+      responses:
+        "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Ouvrage" } } } }
+        "409": { $ref: "#/components/responses/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+  /ouvrages/{id}:
+    get:
+      tags: [Ouvrages]
+      summary: Fiche privée complète (selon périmètre)
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL, AGENT_PRELEVEUR, LABORATOIRE, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Ouvrage" } } } }
+        "403": { $ref: "#/components/responses/Problem" }
+    patch:
+      tags: [Ouvrages]
+      summary: Met à jour les données administratives (changement de propriétaire = demande validée par la commune)
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { $ref: "#/components/schemas/OuvrageUpdate" } } }
+      responses: { "200": { description: OK } }
+  /ouvrages/{id}/dossier:
+    get:
+      tags: [Ouvrages]
+      summary: Dossier numérique (documents, historique contrôles/certificats)
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, LABORATOIRE, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Dossier" } } } } }
+  /ouvrages/{id}/documents:
+    post:
+      tags: [Ouvrages]
+      summary: Ajoute un document (PDF/JPEG/PNG/WebP, 10 Mo max, antivirus + vérification du type MIME réel)
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, ENTREPRISE_FORAGE_ONG]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind]
+              properties:
+                file: { type: string, format: binary }
+                kind: { $ref: "#/components/schemas/DocumentKind" }
+      responses: { "201": { description: Créé } }
+  /documents/{id}/download:
+    get:
+      tags: [Ouvrages]
+      summary: Télécharge un document (URL signée courte durée ; contrôle de périmètre)
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Fichier }
+        "302": { description: Redirection vers URL signée }
+  /ouvrages/import-sie:
+    post:
+      tags: [Ouvrages]
+      summary: Import initial du fichier SIE (CSV/XLSX) — idempotent sur sieId
+      description: Mode `dryRun=true` pour simulation. Produit une ligne SieImportHistory avec rapport d'erreurs (EF-05).
+      x-roles: [MINEE, ADMIN]
+      x-strong-auth: true
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                dryRun: { type: boolean, default: false }
+      responses:
+        "202": { description: Import démarré, content: { application/json: { schema: { $ref: "#/components/schemas/SieImportJob" } } } }
+  /ouvrages/import-sie/{jobId}:
+    get:
+      tags: [Ouvrages]
+      summary: État et rapport d'erreurs de l'import
+      x-roles: [MINEE, ADMIN]
+      parameters: [{ name: jobId, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/SieImportJob" } } } } }
+
+  # ───────────── DEMANDES ─────────────
+  /demandes:
+    get:
+      tags: [Demandes]
+      summary: Liste des demandes dans le périmètre
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL, LABORATOIRE, MINEE, ADMIN]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/DemandeStatus" } }
+        - { name: ouvrageId, in: query, schema: { type: string, format: uuid } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Demandes]
+      summary: Crée une demande (brouillon). Renouvellement si `type=RENOUVELLEMENT`.
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ouvrageId]
+              properties:
+                ouvrageId: { type: string, format: uuid }
+                type: { $ref: "#/components/schemas/DemandeType" }
+      responses:
+        "201": { description: Créée, content: { application/json: { schema: { $ref: "#/components/schemas/Demande" } } } }
+        "409": { description: Une demande active existe déjà pour cet ouvrage }
+  /demandes/{id}:
+    get:
+      tags: [Demandes]
+      summary: Détail + chronologie des étapes (EF-08)
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL, AGENT_PRELEVEUR, LABORATOIRE, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Demande" } } } } }
+  /demandes/{id}/submit:
+    post:
+      tags: [Demandes]
+      summary: Soumet la demande (fige le tarif)
+      description: |
+        Préconditions : fiche ouvrage complète ; laboratoire choisi (EF-09) ; grille tarifaire ACTIVE sinon 409 `GRID_INACTIVE` (EF-10).
+        Le tarif et la ligne de grille sont figés en snapshot sur la demande.
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [laboratoireId], properties: { laboratoireId: { type: string, format: uuid } } }
+      responses:
+        "200": { description: Soumise }
+        "409": { $ref: "#/components/responses/Problem" }
+  /demandes/{id}/commune-validation:
+    post:
+      tags: [Demandes]
+      summary: Valide ou rejette l'adhésion (commune du territoire)
+      x-roles: [AGENT_COMMUNAL]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [VALIDER, REJETER] }
+                reason: { type: string, description: "Obligatoire si REJETER" }
+      responses: { "200": { description: OK } }
+  /demandes/{id}/cancel:
+    post:
+      tags: [Demandes]
+      summary: Annule (avant prélèvement)
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+  /demandes/{id}/contre-analyses:
+    post:
+      tags: [Demandes]
+      summary: Ouvre une contre-analyse (labo ≠ labo initial ; payeur/délai selon paramètres MINEE)
+      x-roles: [PROPRIETAIRE, MINEE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [laboratoireId, payeur]
+              properties:
+                laboratoireId: { type: string, format: uuid }
+                payeur: { type: string, enum: [PROPRIETAIRE, MINEE, COMMUNE] }
+      responses:
+        "201": { description: Créée }
+        "409": { description: Même laboratoire / délai dépassé / quota atteint }
+
+  # ───────────── PAIEMENTS ─────────────
+  /tarifs/estimation:
+    get:
+      tags: [Paiements]
+      summary: Estime le tarif d'une demande
+      description: 409 `GRID_INACTIVE` tant que le MINEE n'a pas validé la grille.
+      parameters:
+        - { name: ouvrageId, in: query, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { type: object, properties: { amount: { type: integer }, grilleVersion: { type: integer } } } } } }
+        "409": { $ref: "#/components/responses/Problem" }
+  /demandes/{id}/paiements:
+    get:
+      tags: [Paiements]
+      summary: Historique des paiements et solde
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Paiements]
+      summary: Déclare un paiement (Orange Money / MTN MoMo / espèces) avec sa référence de transaction
+      description: |
+        Option A (pilote) : pas de passerelle ; le paiement est `DECLARE` puis `CONFIRME` manuellement (voir ci-dessous).
+        Unicité (canal, référence) => 409 `PAYMENT_DUPLICATE`. Le règlement partiel est autorisé ; la somme confirmée ne dépasse jamais le dû.
+      x-roles: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { $ref: "#/components/parameters/IdempotencyKey" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount, canal, reference]
+              properties:
+                amount: { type: integer, minimum: 1 }
+                canal: { $ref: "#/components/schemas/PaiementCanal" }
+                reference: { type: string }
+                paidAt: { type: string, format: date-time }
+      responses:
+        "201": { description: Déclaré, content: { application/json: { schema: { $ref: "#/components/schemas/Paiement" } } } }
+        "409": { $ref: "#/components/responses/Problem" }
+  /paiements/{id}/confirm:
+    post:
+      tags: [Paiements]
+      summary: "Confirme un paiement et émet le reçu (partiel inclus). DÉCISION MOA en suspens, voir guide §11"
+      x-roles: [ADMIN, MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Confirmé, content: { application/json: { schema: { $ref: "#/components/schemas/Recu" } } } }
+  /paiements/{id}/reject:
+    post:
+      tags: [Paiements]
+      summary: Rejette un paiement (référence introuvable)
+      x-roles: [ADMIN, MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [reason], properties: { reason: { type: string } } } } }
+      responses: { "200": { description: OK } }
+  /recus/{id}/pdf:
+    get:
+      tags: [Paiements]
+      summary: Reçu PDF
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: PDF, content: { application/pdf: { schema: { type: string, format: binary } } } } }
+
+  # ───────────── PRÉLÈVEMENTS ─────────────
+  /prelevements:
+    get:
+      tags: [Prelevements]
+      summary: "Prélèvements dans le périmètre (agent : ses zones ; labo : ses échantillons)"
+      x-roles: [AGENT_PRELEVEUR, LABORATOIRE, AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/PrelevementStatus" } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Prelevements]
+      summary: Enregistre un prélèvement (en ligne)
+      description: "Préconditions : demande payée/échelonnée selon règle, `status=PRELEVEMENT_PLANIFIE`, agent habilité (assermentation valide) dans la commune de l'ouvrage."
+      x-roles: [AGENT_PRELEVEUR]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PrelevementCreate" } } }
+      responses: { "201": { description: Créé, content: { application/json: { schema: { $ref: "#/components/schemas/Prelevement" } } } } }
+  /prelevements/sync:
+    post:
+      tags: [Prelevements]
+      summary: Synchronisation différée de fiches saisies hors ligne (lot)
+      description: |
+        Idempotent par `clientUuid`. Résultat par élément : `APPLIED | DUPLICATE | CONFLICT | REJECTED`.
+        Conflit = la demande a changé d'état côté serveur depuis `clientTs` (annulée, déjà prélevée…) ; la fiche est conservée
+        en file `PrelevementSyncQueue` pour arbitrage, jamais perdue (EN-05).
+      x-roles: [AGENT_PRELEVEUR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items: { type: array, maxItems: 50, items: { $ref: "#/components/schemas/PrelevementCreate" } }
+      responses:
+        "200":
+          description: Résultat par élément
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        clientUuid: { type: string, format: uuid }
+                        outcome: { type: string, enum: [APPLIED, DUPLICATE, CONFLICT, REJECTED] }
+                        prelevementId: { type: string, format: uuid }
+                        message: { type: string }
+  /prelevements/{id}/photo:
+    post:
+      tags: [Prelevements]
+      summary: Photo du prélèvement (WebP < 200 Ko)
+      x-roles: [AGENT_PRELEVEUR]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { multipart/form-data: { schema: { type: object, properties: { file: { type: string, format: binary } } } } }
+      responses: { "201": { description: OK } }
+  /prelevements/{id}/reception:
+    post:
+      tags: [Prelevements]
+      summary: Accusé de réception horodaté par le laboratoire (ou rejet du flacon)
+      x-roles: [LABORATOIRE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accepted]
+              properties: { accepted: { type: boolean }, reason: { type: string } }
+      responses: { "200": { description: OK } }
+
+  # ───────────── ANALYSES ─────────────
+  /analyses:
+    get:
+      tags: [Analyses]
+      summary: Analyses du laboratoire (file des échantillons affectés) ou dans le périmètre
+      x-roles: [LABORATOIRE, AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/AnalyseStatus" } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Analyses]
+      summary: Ouvre une analyse pour un prélèvement reçu (fige la version de norme en vigueur)
+      x-roles: [LABORATOIRE]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [prelevementId], properties: { prelevementId: { type: string, format: uuid } } } } }
+      responses:
+        "201": { description: OK }
+        "409": { description: Aucun référentiel PUBLIE actif }
+  /analyses/{id}:
+    get:
+      tags: [Analyses]
+      summary: Détail avec valeurs, seuils et verdict
+      x-roles: [LABORATOIRE, AGENT_COMMUNAL, PROPRIETAIRE, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Analyse" } } } } }
+  /analyses/{id}/valeurs:
+    put:
+      tags: [Analyses]
+      summary: Saisit/remplace les valeurs par paramètre (tant que EN_SAISIE)
+      description: Le serveur compare aux seuils et calcule `isCompliant` par ligne ; aucun verdict n'est accepté en entrée.
+      x-roles: [LABORATOIRE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [values]
+              properties:
+                analystComment: { type: string }
+                analysedAt: { type: string, format: date-time }
+                values:
+                  type: array
+                  items:
+                    type: object
+                    required: [parameterCode]
+                    properties:
+                      parameterCode: { type: string, example: PH }
+                      value: { type: number }
+                      presence: { type: boolean }
+      responses: { "200": { description: Valeurs enregistrées (verdict provisoire) } }
+  /analyses/{id}/proces-verbal:
+    post:
+      tags: [Analyses]
+      summary: Téléverse le PV signé (PDF) — empreinte SHA-256 + accusé horodaté
+      x-roles: [LABORATOIRE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { multipart/form-data: { schema: { type: object, required: [file], properties: { file: { type: string, format: binary } } } } }
+      responses: { "201": { description: Reçu, content: { application/json: { schema: { $ref: "#/components/schemas/ProcesVerbal" } } } } }
+  /analyses/{id}/submit:
+    post:
+      tags: [Analyses]
+      summary: Soumet et VERROUILLE l'analyse (verdict final ; alerte sanitaire si NON_CONFORME_GRAVE)
+      description: Exige toutes les valeurs obligatoires et un PV. Fait passer la demande à `ANALYSE_SOUMISE` puis `EN_VALIDATION_MINEE` (ou `NON_CONFORME`).
+      x-roles: [LABORATOIRE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses:
+        "200": { description: Soumise }
+        "409": { description: Valeur obligatoire manquante ou PV absent }
+  /analyses/{id}/amendements:
+    post:
+      tags: [Analyses]
+      summary: Demande un amendement motivé sur une analyse verrouillée (versionné)
+      x-roles: [LABORATOIRE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason, changes]
+              properties:
+                reason: { type: string, minLength: 20 }
+                changes: { type: array, items: { type: object, properties: { parameterCode: { type: string }, after: { type: number } } } }
+      responses: { "201": { description: Créé en attente d'approbation } }
+  /amendements/{id}/decision:
+    post:
+      tags: [Analyses]
+      summary: Approuve ou refuse un amendement
+      x-roles: [MINEE, ADMIN]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [decision], properties: { decision: { type: string, enum: [APPROUVER, REFUSER] }, reason: { type: string } } } } }
+      responses: { "200": { description: OK } }
+
+  # ───────────── VALIDATION MINEE & CERTIFICATS ─────────────
+  /minee/validations:
+    get:
+      tags: [Validation MINEE]
+      summary: File de validation (demandes `EN_VALIDATION_MINEE`)
+      x-roles: [MINEE]
+      parameters: [{ $ref: "#/components/parameters/Page" }, { $ref: "#/components/parameters/Limit" }]
+      responses: { "200": { description: OK } }
+  /minee/validations/batch:
+    post:
+      tags: [Validation MINEE]
+      summary: Valide/rejette par lot (co-signature) — émet les certificats
+      description: |
+        Pour chaque demande : vérifie verdict CONFORME (ou contre-analyse favorable), norme publiée, PV présent.
+        Génère certificat (EMIS), QrToken, PDF filigrané FR/EN, notifie le propriétaire. Transaction unique par demande ;
+        résultat partiel possible, jamais de demi-état.
+      x-roles: [MINEE]
+      x-strong-auth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decisions]
+              properties:
+                decisions:
+                  type: array
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [demandeId, decision]
+                    properties:
+                      demandeId: { type: string, format: uuid }
+                      decision: { type: string, enum: [VALIDER, REJETER] }
+                      reason: { type: string }
+      responses:
+        "200": { description: Résultat par demande }
+  /minee/delegations:
+    get:
+      tags: [Validation MINEE]
+      summary: Délégations de validation
+      x-roles: [MINEE, ADMIN]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Validation MINEE]
+      summary: Crée une délégation journalisée (dates bornées, motif)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [delegueId, validFrom, validUntil, reason]
+              properties:
+                delegueId: { type: string, format: uuid }
+                validFrom: { type: string, format: date-time }
+                validUntil: { type: string, format: date-time }
+                reason: { type: string }
+      responses: { "201": { description: Créée } }
+  /minee/delegations/{id}:
+    delete:
+      tags: [Validation MINEE]
+      summary: "Révoque une délégation (soft : revokedAt)"
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "204": { description: Révoquée } }
+  /certificats:
+    get:
+      tags: [Certificats]
+      summary: Registre des certificats (périmètre)
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/CertificatStatus" } }
+        - { name: expiringInDays, in: query, schema: { type: integer, example: 60 } }
+        - { name: communeId, in: query, schema: { type: integer } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: OK } }
+  /certificats/{id}:
+    get:
+      tags: [Certificats]
+      summary: Détail + transitions
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/Certificat" } } } } }
+  /certificats/{id}/pdf:
+    get:
+      tags: [Certificats]
+      summary: Télécharge le PDF filigrané (propriétaire et agents habilités SEULS — EF-20)
+      description: Chaque téléchargement est audité. Le public reçoit 403 ; jamais d'URL publique.
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, AGENT_PRELEVEUR, MINEE]
+      parameters:
+        - { $ref: "#/components/parameters/Id" }
+        - { name: lang, in: query, schema: { type: string, enum: [fr, en] } }
+      responses:
+        "200": { description: PDF, content: { application/pdf: { schema: { type: string, format: binary } } } }
+        "403": { $ref: "#/components/responses/Problem" }
+  /certificats/{id}/confirm-plaque:
+    post:
+      tags: [Certificats]
+      summary: Confirme la pose de la plaque -> passage EMIS → ACTIF
+      x-roles: [AGENT_COMMUNAL, AGENT_PRELEVEUR]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        content: { application/json: { schema: { type: object, properties: { photoDocumentId: { type: string, format: uuid } } } } }
+      responses: { "200": { description: OK } }
+  /certificats/{id}/suspend:
+    post:
+      tags: [Certificats]
+      summary: Suspend (révocation immédiate du QR < 1 min)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReasonBody" } } }
+      responses: { "200": { description: OK } }
+  /certificats/{id}/reactivate:
+    post:
+      tags: [Certificats]
+      summary: Réactive un certificat suspendu (après mesure corrective)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReasonBody" } } }
+      responses: { "200": { description: OK } }
+  /certificats/{id}/withdraw:
+    post:
+      tags: [Certificats]
+      summary: Retire définitivement (QR révoqué)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/ReasonBody" } } }
+      responses: { "200": { description: OK } }
+
+  # ───────────── SIGNALEMENTS (staff) ─────────────
+  /signalements:
+    get:
+      tags: [Signalements]
+      summary: Signalements de la commune (ou tous pour MINEE)
+      x-roles: [AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters:
+        - { name: status, in: query, schema: { $ref: "#/components/schemas/SignalementStatus" } }
+        - { name: category, in: query, schema: { $ref: "#/components/schemas/SignalementCategorie" } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: OK } }
+  /signalements/{id}:
+    get:
+      tags: [Signalements]
+      summary: Détail (avec photos)
+      x-roles: [AGENT_COMMUNAL, MINEE, ADMIN]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+    patch:
+      tags: [Signalements]
+      summary: Prend en charge / résout / escalade
+      x-roles: [AGENT_COMMUNAL, MINEE]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { $ref: "#/components/schemas/SignalementStatus" }
+                resolutionNote: { type: string }
+      responses: { "200": { description: OK } }
+
+  # ───────────── SUBVENTIONS (instruction manuelle au pilote) ─────────────
+  /subventions:
+    get:
+      tags: [Subventions]
+      summary: Dossiers de subvention (périmètre)
+      x-roles: [PROPRIETAIRE, AGENT_COMMUNAL, MINEE]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Subventions]
+      summary: Demande de subvention rattachée à une demande de certification
+      x-roles: [PROPRIETAIRE]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [demandeId]
+              properties:
+                demandeId: { type: string, format: uuid }
+                justificatifDocumentIds: { type: array, items: { type: string, format: uuid } }
+      responses: { "201": { description: Créée } }
+  /subventions/{id}/commune-decision:
+    post:
+      tags: [Subventions]
+      summary: Avis d'éligibilité de la commune
+      x-roles: [AGENT_COMMUNAL]
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [eligible]
+              properties: { eligible: { type: boolean }, criterion: { type: string }, note: { type: string } }
+      responses: { "200": { description: OK } }
+  /subventions/{id}/minee-decision:
+    post:
+      tags: [Subventions]
+      summary: Arbitrage MINEE et imputation sur une enveloppe
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accorder]
+              properties:
+                accorder: { type: boolean }
+                enveloppeId: { type: string, format: uuid }
+                amount: { type: integer }
+                reason: { type: string }
+      responses: { "200": { description: OK } }
+  /enveloppes:
+    get: { tags: [Subventions], summary: Enveloppes par financeur, x-roles: [MINEE, AGENT_COMMUNAL], responses: { "200": { description: OK } } }
+    post:
+      tags: [Subventions]
+      summary: Crée une enveloppe
+      x-roles: [MINEE]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [financeur, total]
+              properties: { financeur: { type: string }, total: { type: integer }, communeId: { type: integer } }
+      responses: { "201": { description: Créée } }
+
+  # ───────────── RÉFÉRENTIELS ─────────────
+  /normes:
+    get:
+      tags: [Referentiels]
+      summary: Versions du référentiel
+      x-roles: [LABORATOIRE, MINEE, ADMIN]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Referentiels]
+      summary: Crée une version BROUILLON (copie éventuelle d'une version précédente)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, version]
+              properties:
+                code: { type: string, example: "NC 207" }
+                version: { type: string }
+                copyFromId: { type: string, format: uuid }
+                validityMonths: { type: integer }
+      responses: { "201": { description: Créée } }
+  /normes/{id}/seuils:
+    put:
+      tags: [Referentiels]
+      summary: Remplace les seuils d'un BROUILLON (refusé si PUBLIE)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/Seuil" }
+      responses: { "200": { description: OK } }
+  /normes/{id}/publish:
+    post:
+      tags: [Referentiels]
+      summary: Publie la version (archive la précédente ; sans effet rétroactif sur les certificats émis)
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+  /grilles-tarifaires:
+    get: { tags: [Referentiels], summary: Grilles, x-roles: [MINEE, ADMIN], responses: { "200": { description: OK } } }
+    post:
+      tags: [Referentiels]
+      summary: Crée une grille BROUILLON avec ses lignes
+      x-roles: [MINEE, ADMIN]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/GrilleCreate" } } }
+      responses: { "201": { description: Créée } }
+  /grilles-tarifaires/{id}/activate:
+    post:
+      tags: [Referentiels]
+      summary: "Valide (MINEE) et active. Tant que non active : aucun tarif calculable."
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+
+  # ───────────── ANNUAIRE ─────────────
+  /laboratoires:
+    get:
+      tags: [Annuaire]
+      summary: Laboratoires référencés (nom, localisation, paramètres couverts) — consultable par tous les comptes
+      parameters: [{ name: communeId, in: query, schema: { type: integer } }]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Annuaire]
+      summary: Crée un laboratoire agréé
+      x-roles: [MINEE, ADMIN]
+      x-strong-auth: true
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LaboratoireCreate" } } }
+      responses: { "201": { description: Créé } }
+  /laboratoires/{id}:
+    patch:
+      tags: [Annuaire]
+      summary: Agrément, portée, statut de référencement
+      x-roles: [MINEE]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+  /organisations:
+    get:
+      tags: [Annuaire]
+      summary: Entreprises de traitement / forage / ONG référencées
+      parameters: [{ name: type, in: query, schema: { $ref: "#/components/schemas/OrganisationType" } }]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Annuaire]
+      summary: Crée une organisation
+      x-roles: [MINEE, ADMIN]
+      responses: { "201": { description: Créée } }
+  /rapports-intervention:
+    post:
+      tags: [Annuaire]
+      summary: Dépose un rapport d'intervention (n'altère aucune donnée certifiante)
+      x-roles: [ENTREPRISE_TRAITEMENT]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [ouvrageId, file]
+              properties:
+                ouvrageId: { type: string, format: uuid }
+                summary: { type: string }
+                treatedAt: { type: string, format: date }
+                file: { type: string, format: binary }
+      responses: { "201": { description: Déposé } }
+
+  # ───────────── PILOTAGE ─────────────
+  /dashboard/minee:
+    get:
+      tags: [Pilotage]
+      summary: Couverture, conformité, délais, expirations (EF-29)
+      x-roles: [MINEE, ADMIN]
+      parameters:
+        - { name: regionId, in: query, schema: { type: integer } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+      responses: { "200": { description: OK, content: { application/json: { schema: { $ref: "#/components/schemas/DashboardMinee" } } } } }
+  /dashboard/commune:
+    get:
+      tags: [Pilotage]
+      summary: Tableau de bord de la commune de l'appelant (EF-30)
+      x-roles: [AGENT_COMMUNAL]
+      responses: { "200": { description: OK } }
+  /notifications:
+    get:
+      tags: [Pilotage]
+      summary: Notifications in-app de l'utilisateur
+      parameters: [{ name: unreadOnly, in: query, schema: { type: boolean } }, { $ref: "#/components/parameters/Page" }]
+      responses: { "200": { description: OK } }
+  /notifications/{id}/read:
+    post:
+      tags: [Pilotage]
+      summary: Marque comme lue
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "204": { description: OK } }
+
+  # ───────────── ADMIN ─────────────
+  /users:
+    get:
+      tags: [Admin]
+      summary: Comptes (filtre rôle/statut)
+      x-roles: [ADMIN]
+      responses: { "200": { description: OK } }
+    post:
+      tags: [Admin]
+      summary: Crée un compte staff (MINEE, labo, agent communal, préleveur…) — mot de passe initial à changer
+      x-roles: [ADMIN]
+      x-strong-auth: true
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UserCreate" } } }
+      responses: { "201": { description: Créé } }
+  /users/{id}:
+    patch:
+      tags: [Admin]
+      summary: Statut, rôle, périmètre ; reset 2FA
+      x-roles: [ADMIN]
+      x-strong-auth: true
+      parameters: [{ $ref: "#/components/parameters/Id" }]
+      responses: { "200": { description: OK } }
+  /audit-logs:
+    get:
+      tags: [Admin]
+      summary: Journal d'audit (lecture seule)
+      x-roles: [MINEE, ADMIN]
+      parameters:
+        - { name: entityType, in: query, schema: { type: string } }
+        - { name: entityId, in: query, schema: { type: string } }
+        - { name: actorId, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, schema: { type: string, format: date-time } }
+        - { $ref: "#/components/parameters/Page" }
+        - { $ref: "#/components/parameters/Limit" }
+      responses: { "200": { description: OK } }
+  /audit-logs/verify-chain:
+    get:
+      tags: [Admin]
+      summary: Vérifie l'intégrité de la chaîne SHA-256 (renvoie les seq rompus)
+      x-roles: [MINEE, ADMIN]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  checked: { type: integer }
+                  brokenSeq: { type: array, items: { type: integer } }
+  /exports/system:
+    post:
+      tags: [Admin]
+      summary: Export complet données + métadonnées de fichiers (réversibilité EN-12)
+      x-roles: [ADMIN]
+      x-strong-auth: true
+      responses: { "202": { description: Export planifié } }
+
+  # ───────────── SYSTÈME ─────────────
+  /health:
+    get:
+      tags: [Systeme]
+      summary: Liveness / readiness (base, stockage, file de notifications)
+      security: []
+      responses: { "200": { description: OK }, "503": { description: Dégradé } }
+
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+
+  parameters:
+    Id: { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    Page: { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, schema: { type: string, format: uuid } }
+
+  responses:
+    Problem:
+      description: Erreur métier ou validation (RFC 7807)
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    TooMany:
+      description: Limite de fréquence atteinte
+      headers: { Retry-After: { schema: { type: integer } } }
+      content: { application/problem+json: { schema: { $ref: "#/components/schemas/Problem" } } }
+    Session:
+      description: Session ouverte
+      content: { application/json: { schema: { $ref: "#/components/schemas/Session" } } }
+
+  schemas:
+    Problem:
+      type: object
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string, example: GRID_INACTIVE }
+        detail: { type: string }
+        errors: { type: array, items: { type: object, properties: { field: { type: string }, message: { type: string } } } }
+        traceId: { type: string }
+    Session:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        expiresIn: { type: integer, example: 900 }
+        user: { $ref: "#/components/schemas/User" }
+    MfaChallenge:
+      type: object
+      properties:
+        mfaRequired: { type: boolean, example: true }
+        mfaToken: { type: string }
+        mfaEnrolled: { type: boolean }
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        role: { $ref: "#/components/schemas/Role" }
+        fullName: { type: string }
+        phone: { type: string }
+        email: { type: string, nullable: true }
+        locale: { type: string }
+        communeId: { type: integer, nullable: true }
+        laboratoireId: { type: string, format: uuid, nullable: true }
+        mfaEnabled: { type: boolean }
+    UserCreate:
+      type: object
+      required: [role, fullName, phone]
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        fullName: { type: string }
+        phone: { type: string }
+        email: { type: string, format: email }
+        communeId: { type: integer }
+        laboratoireId: { type: string, format: uuid }
+        organisationId: { type: string, format: uuid }
+        habilitationUntil: { type: string, format: date }
+    Role:
+      type: string
+      enum: [PROPRIETAIRE, ENTREPRISE_FORAGE_ONG, AGENT_COMMUNAL, AGENT_PRELEVEUR, LABORATOIRE, ENTREPRISE_TRAITEMENT, MINEE, ADMIN]
+    OuvrageType: { type: string, enum: [FORAGE, PUITS_AMENAGE] }
+    OuvrageStatus: { type: string, enum: [NON_ENREGISTRE_CERTIF, EN_ATTENTE, CERTIFIE, NON_CONFORME, CERTIF_EXPIREE, HORS_SERVICE] }
+    PublicStatus: { type: string, enum: [CERTIFIE, EXPIRE, SUSPENDU, RETIRE, NON_CERTIFIE] }
+    DemandeType: { type: string, enum: [INITIALE, RENOUVELLEMENT] }
+    DemandeStatus:
+      type: string
+      enum: [BROUILLON, SOUMISE, VALIDEE_COMMUNE, EN_ATTENTE_PAIEMENT, PRELEVEMENT_PLANIFIE, PRELEVE, EN_ANALYSE, ANALYSE_SOUMISE, EN_VALIDATION_MINEE, CERTIFIEE, NON_CONFORME, EN_CONTRE_ANALYSE, REJETEE, ANNULEE]
+    PrelevementStatus: { type: string, enum: [PLANIFIE, REALISE, TRANSMIS_LABO, RECU_LABO, REJETE_LABO] }
+    AnalyseStatus: { type: string, enum: [EN_SAISIE, SOUMISE, AMENDEE] }
+    Verdict: { type: string, enum: [CONFORME, NON_CONFORME, NON_CONFORME_GRAVE] }
+    CertificatStatus: { type: string, enum: [EMIS, ACTIF, SUSPENDU, EXPIRE, RETIRE, REMPLACE] }
+    PaiementCanal: { type: string, enum: [ORANGE_MONEY, MTN_MOMO, ESPECES, VIREMENT, AUTRE] }
+    SignalementStatus: { type: string, enum: [RECU, PRIS_EN_CHARGE, ESCALADE_MINEE, RESOLU, REJETE] }
+    SignalementCategorie:
+      type: string
+      enum: [EAU_SUSPECTE, PLAQUE_ABSENTE_DEGRADEE, OUVRAGE_NON_ENREGISTRE, FRAUDE_PRESUMEE, OUVRAGE_DEGRADE, INFO_INCORRECTE, CERTIF_AFFICHEE_EXPIREE, AUTRE]
+    DocumentKind:
+      type: string
+      enum: [IDENTIFICATION, TECHNIQUE, PV_ANALYSE, CERTIFICAT_PDF, RECU_PDF, RAPPORT_TRAITEMENT, RAPPORT_CONTROLE, PHOTO_PRELEVEMENT, PHOTO_SIGNALEMENT, JUSTIFICATIF_SUBVENTION, AUTRE]
+    OrganisationType: { type: string, enum: [ENTREPRISE_FORAGE, ONG, ENTREPRISE_TRAITEMENT, PROGRAMME_RSE, COMITE_GESTION] }
+
+    PublicVerification:
+      type: object
+      required: [state, pilot]
+      properties:
+        state: { type: string, enum: [ACTIVE, SUSPENDED, EXPIRED, WITHDRAWN, UNKNOWN] }
+        pilot: { type: boolean, example: true, description: "Affiche « Pilote en cours de validation »" }
+        ouvrage:
+          type: object
+          nullable: true
+          description: "Absent si UNKNOWN. Jamais de propriétaire."
+          properties:
+            aquasafeNumber: { type: string }
+            name: { type: string }
+            village: { type: string }
+            communeName: { type: string }
+        certificat:
+          type: object
+          nullable: true
+          properties:
+            number: { type: string }
+            validFrom: { type: string, format: date }
+            validUntil: { type: string, format: date }
+            referentiel: { type: string, example: "NC 207 v1" }
+            expiresInDays: { type: integer }
+        lastControlAt: { type: string, format: date, nullable: true }
+        guidanceCode: { type: string, description: "Clé i18n de la conduite à tenir par état" }
+        reportUrl: { type: string, description: "Lien vers le signalement pré-rempli (QR inconnu)" }
+    PublicOuvrage:
+      type: object
+      properties:
+        aquasafeNumber: { type: string }
+        name: { type: string }
+        village: { type: string }
+        communeName: { type: string }
+        type: { $ref: "#/components/schemas/OuvrageType" }
+        publicStatus: { $ref: "#/components/schemas/PublicStatus" }
+        validUntil: { type: string, format: date, nullable: true }
+        lastControlAt: { type: string, format: date, nullable: true }
+        latitude: { type: number }
+        longitude: { type: number }
+    PublicOuvragePage:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/PublicOuvrage" } }
+        meta: { $ref: "#/components/schemas/Meta" }
+    Meta:
+      type: object
+      properties: { page: { type: integer }, limit: { type: integer }, total: { type: integer } }
+
+    OuvrageCreate:
+      type: object
+      required: [type, name, communeId, latitude, longitude]
+      properties:
+        sieId: { type: string }
+        type: { $ref: "#/components/schemas/OuvrageType" }
+        usage: { type: string, enum: [DOMESTIQUE, COMMUNAUTAIRE, COMMERCIAL, INSTITUTIONNEL] }
+        name: { type: string }
+        village: { type: string }
+        communeId: { type: integer }
+        latitude: { type: number, minimum: 1.6, maximum: 13.1 }
+        longitude: { type: number, minimum: 8.4, maximum: 16.2 }
+        gpsAccuracyM: { type: integer }
+        yearBuilt: { type: integer }
+        ownerPhone: { type: string, description: "Rattache un propriétaire existant ou invite (commune/entreprise)" }
+    OuvrageUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        village: { type: string }
+        usage: { type: string }
+        status: { type: string, enum: [HORS_SERVICE], description: "Autres statuts pilotés par le workflow uniquement" }
+    Ouvrage:
+      allOf:
+        - { $ref: "#/components/schemas/OuvrageCreate" }
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            aquasafeNumber: { type: string }
+            status: { $ref: "#/components/schemas/OuvrageStatus" }
+            lastControlAt: { type: string, format: date-time, nullable: true }
+            currentCertificat: { $ref: "#/components/schemas/Certificat" }
+    OuvragePage:
+      type: object
+      properties:
+        data: { type: array, items: { $ref: "#/components/schemas/Ouvrage" } }
+        meta: { $ref: "#/components/schemas/Meta" }
+    Dossier:
+      type: object
+      properties:
+        ouvrageId: { type: string, format: uuid }
+        documents: { type: array, items: { type: object } }
+        demandes: { type: array, items: { $ref: "#/components/schemas/Demande" } }
+        certificats: { type: array, items: { $ref: "#/components/schemas/Certificat" } }
+        timeline: { type: array, items: { type: object, properties: { at: { type: string, format: date-time }, event: { type: string }, actor: { type: string } } } }
+    SieImportJob:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [RUNNING, DONE, FAILED] }
+        totalRows: { type: integer }
+        createdRows: { type: integer }
+        updatedRows: { type: integer }
+        skippedRows: { type: integer }
+        errorRows: { type: integer }
+        errors: { type: array, items: { type: object, properties: { row: { type: integer }, field: { type: string }, message: { type: string } } } }
+
+    Demande:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        reference: { type: string }
+        ouvrageId: { type: string, format: uuid }
+        type: { $ref: "#/components/schemas/DemandeType" }
+        status: { $ref: "#/components/schemas/DemandeStatus" }
+        step: { type: integer, minimum: 1, maximum: 6, description: "Étape affichée (6 étapes du parcours)" }
+        laboratoireId: { type: string, format: uuid, nullable: true }
+        tarifAmount: { type: integer, nullable: true }
+        subventionAmount: { type: integer }
+        amountPaid: { type: integer }
+        balanceDue: { type: integer }
+        history: { type: array, items: { type: object, properties: { at: { type: string, format: date-time }, from: { type: string }, to: { type: string }, actor: { type: string } } } }
+    Paiement:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        amount: { type: integer }
+        canal: { $ref: "#/components/schemas/PaiementCanal" }
+        reference: { type: string }
+        status: { type: string, enum: [DECLARE, CONFIRME, REJETE] }
+    Recu:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string }
+        amount: { type: integer }
+        balanceAfter: { type: integer }
+
+    PrelevementCreate:
+      type: object
+      required: [clientUuid, demandeId, bottleCode, collectedAt, latitude, longitude]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        demandeId: { type: string, format: uuid }
+        bottleCode: { type: string }
+        collectedAt: { type: string, format: date-time }
+        latitude: { type: number }
+        longitude: { type: number }
+        gpsAccuracyM: { type: integer }
+        waterTempC: { type: number }
+        transportTempC: { type: number }
+        transportNotes: { type: string }
+    Prelevement:
+      allOf:
+        - { $ref: "#/components/schemas/PrelevementCreate" }
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            status: { $ref: "#/components/schemas/PrelevementStatus" }
+            laboratoireId: { type: string, format: uuid }
+    Analyse:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/AnalyseStatus" }
+        verdict: { $ref: "#/components/schemas/Verdict" }
+        referentiel: { type: string }
+        values:
+          type: array
+          items:
+            type: object
+            properties:
+              parameterCode: { type: string }
+              label: { type: string }
+              unit: { type: string }
+              value: { type: number }
+              min: { type: number, nullable: true }
+              max: { type: number, nullable: true }
+              isCompliant: { type: boolean }
+    ProcesVerbal:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        sha256: { type: string }
+        receivedAt: { type: string, format: date-time }
+    Certificat:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        number: { type: string }
+        status: { $ref: "#/components/schemas/CertificatStatus" }
+        issuedAt: { type: string, format: date-time }
+        validFrom: { type: string, format: date, nullable: true }
+        validUntil: { type: string, format: date, nullable: true }
+        expiringSoon: { type: boolean, description: "Dérivé : validUntil - now <= 60 jours" }
+        referentiel: { type: string }
+        transitions:
+          type: array
+          items:
+            type: object
+            properties:
+              from: { type: string, nullable: true }
+              to: { type: string }
+              reason: { type: string }
+              actor: { type: string, nullable: true }
+              at: { type: string, format: date-time }
+    ReasonBody:
+      type: object
+      required: [reason]
+      properties: { reason: { type: string, minLength: 10 } }
+
+    SignalementCreate:
+      type: object
+      required: [category]
+      properties:
+        clientUuid: { type: string, format: uuid }
+        category: { $ref: "#/components/schemas/SignalementCategorie" }
+        description: { type: string, maxLength: 1000 }
+        latitude: { type: number }
+        longitude: { type: number }
+        qrToken: { type: string, description: "Si le signalement vient d'un scan" }
+        contactPhone: { type: string }
+        photos: { type: array, maxItems: 3, items: { type: string, format: binary } }
+    SignalementReceipt:
+      type: object
+      properties:
+        trackingNumber: { type: string, example: SG-7K2M9Q }
+        status: { $ref: "#/components/schemas/SignalementStatus" }
+
+    Seuil:
+      type: object
+      required: [parameterCode, label, type]
+      properties:
+        parameterCode: { type: string }
+        label: { type: string }
+        type: { type: string, enum: [PHYSICO_CHIMIQUE, BACTERIOLOGIQUE] }
+        unit: { type: string }
+        minValue: { type: number, nullable: true }
+        maxValue: { type: number, nullable: true }
+        isCritical: { type: boolean }
+        isMandatory: { type: boolean }
+    GrilleCreate:
+      type: object
+      required: [name, lignes]
+      properties:
+        name: { type: string }
+        lignes:
+          type: array
+          items:
+            type: object
+            required: [ouvrageType, usage, amount]
+            properties:
+              ouvrageType: { $ref: "#/components/schemas/OuvrageType" }
+              usage: { type: string }
+              amount: { type: integer, minimum: 0 }
+    LaboratoireCreate:
+      type: object
+      required: [name, agrementNumber, scopeAccreditation]
+      properties:
+        name: { type: string }
+        agrementNumber: { type: string }
+        agrementValidUntil: { type: string, format: date }
+        scopeAccreditation: { type: array, items: { type: string } }
+        communeId: { type: integer }
+        phone: { type: string }
+        email: { type: string }
+        isReferenced: { type: boolean }
+    DashboardMinee:
+      type: object
+      properties:
+        ouvragesTotal: { type: integer }
+        ouvragesCertifies: { type: integer }
+        tauxCouverture: { type: number }
+        tauxConformite: { type: number }
+        delaiMoyenDemandeValidationJours: { type: number }
+        certificatsExpirantDans60Jours: { type: integer }
+        certificatsExpires: { type: integer }
+        signalementsOuverts: { type: integer }
+        parCommune: { type: array, items: { type: object } }
+        generatedAt: { type: string, format: date-time }

@@ -1,0 +1,24 @@
+{
+  "pilot": {
+    "banner": "Pilote en cours de validation"
+  },
+  "common": {
+    "validation_failed": "Les données soumises sont invalides.",
+    "internal_error": "Une erreur interne est survenue.",
+    "not_found": "Ressource introuvable.",
+    "forbidden": "Accès refusé pour ce périmètre.",
+    "unauthorized": "Authentification requise.",
+    "too_many_requests": "Trop de requêtes. Veuillez réessayer plus tard.",
+    "conflict": "Conflit avec l'état actuel de la ressource."
+  },
+  "health": {
+    "degraded": "Un ou plusieurs services critiques sont indisponibles."
+  },
+  "errors": {
+    "VALIDATION_ERROR": "Erreur de validation des champs.",
+    "GRID_INACTIVE": "Aucune grille tarifaire active n'est disponible.",
+    "OUVRAGE_DUPLICATE": "Un ouvrage similaire existe déjà à proximité ou avec cet identifiant.",
+    "PAYMENT_DUPLICATE": "Cette référence de paiement a déjà été enregistrée.",
+    "STRONG_AUTH_REQUIRED": "Une vérification 2FA récente est requise pour cette action."
+  }
+}

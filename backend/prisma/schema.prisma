@@ -1,0 +1,1121 @@
+// AquaSafe — Schéma Prisma reconstruit à partir de GUIDE_BACKEND.md, openapi.yaml et 001_integrity.sql
+// [Guessing] Le fichier schema.prisma original n'ayant pas été fourni, ce schéma aligne exactement
+// les tables snake_case (@@map), colonnes camelCase (sans @map) et énumérations référencés dans
+// 001_integrity.sql, openapi.yaml et GUIDE_BACKEND.md.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────── ÉNUMÉRATIONS ─────────────
+
+enum Role {
+  PROPRIETAIRE
+  ENTREPRISE_FORAGE_ONG
+  AGENT_COMMUNAL
+  AGENT_PRELEVEUR
+  LABORATOIRE
+  ENTREPRISE_TRAITEMENT
+  MINEE
+  ADMIN
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  LOCKED
+  DISABLED
+}
+
+enum AuthCodePurpose {
+  LOGIN
+  REGISTER
+}
+
+enum OuvrageType {
+  FORAGE
+  PUITS_AMENAGE
+}
+
+enum OuvrageUsage {
+  DOMESTIQUE
+  COMMUNAUTAIRE
+  COMMERCIAL
+  INSTITUTIONNEL
+}
+
+enum OuvrageStatus {
+  NON_ENREGISTRE_CERTIF
+  EN_ATTENTE
+  CERTIFIE
+  NON_CONFORME
+  CERTIF_EXPIREE
+  HORS_SERVICE
+}
+
+enum SieImportStatus {
+  RUNNING
+  DONE
+  FAILED
+}
+
+enum DocumentKind {
+  IDENTIFICATION
+  TECHNIQUE
+  PV_ANALYSE
+  CERTIFICAT_PDF
+  RECU_PDF
+  RAPPORT_TRAITEMENT
+  RAPPORT_CONTROLE
+  PHOTO_PRELEVEMENT
+  PHOTO_SIGNALEMENT
+  JUSTIFICATIF_SUBVENTION
+  AUTRE
+}
+
+enum DemandeType {
+  INITIALE
+  RENOUVELLEMENT
+}
+
+enum DemandeStatus {
+  BROUILLON
+  SOUMISE
+  VALIDEE_COMMUNE
+  EN_ATTENTE_PAIEMENT
+  PRELEVEMENT_PLANIFIE
+  PRELEVE
+  EN_ANALYSE
+  ANALYSE_SOUMISE
+  EN_VALIDATION_MINEE
+  CERTIFIEE
+  NON_CONFORME
+  EN_CONTRE_ANALYSE
+  REJETEE
+  ANNULEE
+}
+
+enum PrelevementStatus {
+  PLANIFIE
+  REALISE
+  TRANSMIS_LABO
+  RECU_LABO
+  REJETE_LABO
+}
+
+enum SyncOutcome {
+  APPLIED
+  DUPLICATE
+  CONFLICT
+  REJECTED
+}
+
+enum NormeStatus {
+  BROUILLON
+  PUBLIE
+  ARCHIVE
+}
+
+enum SeuilType {
+  PHYSICO_CHIMIQUE
+  BACTERIOLOGIQUE
+}
+
+enum AnalyseStatus {
+  EN_SAISIE
+  SOUMISE
+  AMENDEE
+}
+
+enum Verdict {
+  CONFORME
+  NON_CONFORME
+  NON_CONFORME_GRAVE
+}
+
+enum AmendementStatus {
+  EN_ATTENTE
+  APPROUVE
+  REFUSE
+}
+
+enum ContreAnalysePayeur {
+  PROPRIETAIRE
+  MINEE
+  COMMUNE
+}
+
+enum ContreAnalyseStatus {
+  OUVERTE
+  EN_COURS
+  TERMINEE
+  ANNULEE
+}
+
+enum CertificatStatus {
+  EMIS
+  ACTIF
+  SUSPENDU
+  EXPIRE
+  RETIRE
+  REMPLACE
+}
+
+enum QrTokenStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum GrilleStatus {
+  BROUILLON
+  ACTIVE
+  ARCHIVEE
+}
+
+enum PaiementCanal {
+  ORANGE_MONEY
+  MTN_MOMO
+  ESPECES
+  VIREMENT
+  AUTRE
+}
+
+enum PaiementStatus {
+  DECLARE
+  CONFIRME
+  REJETE
+}
+
+enum SubventionStatus {
+  SOUMISE
+  ELIGIBLE_COMMUNE
+  NON_ELIGIBLE_COMMUNE
+  ACCORDEE
+  REFUSEE
+}
+
+enum SignalementStatus {
+  RECU
+  PRIS_EN_CHARGE
+  ESCALADE_MINEE
+  RESOLU
+  REJETE
+}
+
+enum SignalementCategorie {
+  EAU_SUSPECTE
+  PLAQUE_ABSENTE_DEGRADEE
+  OUVRAGE_NON_ENREGISTRE
+  FRAUDE_PRESUMEE
+  OUVRAGE_DEGRADE
+  INFO_INCORRECTE
+  CERTIF_AFFICHEE_EXPIREE
+  AUTRE
+}
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum OrganisationType {
+  ENTREPRISE_FORAGE
+  ONG
+  ENTREPRISE_TRAITEMENT
+  PROGRAMME_RSE
+  COMITE_GESTION
+}
+
+// ───────────── COMPTES & SÉCURITÉ ─────────────
+
+model User {
+  id                 String    @id @default(uuid())
+  role               Role
+  status             UserStatus @default(ACTIVE)
+  fullName           String
+  phone              String    @unique
+  email              String?   @unique
+  passwordHash       String?
+  locale             String    @default("fr")
+  communeId          Int?
+  laboratoireId      String?
+  organisationId     String?
+  habilitationUntil  DateTime?
+  mfaEnabled         Boolean   @default(false)
+  mustChangePassword Boolean   @default(false)
+  failedLogins       Int       @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  commune              Commune?               @relation(fields: [communeId], references: [id])
+  laboratoire          Laboratoire?           @relation(fields: [laboratoireId], references: [id])
+  organisation         Organisation?          @relation(fields: [organisationId], references: [id])
+  authCodes            UserAuthCode[]
+  totpSecret           TotpSecret?
+  backupCodes          BackupCode[]
+  refreshTokens        RefreshToken[]
+  communeScopes        UserCommuneScope[]
+  ouvragesOwned        Ouvrage[]              @relation("OuvrageOwner")
+  demandesCreated      DemandeCertification[] @relation("DemandeApplicant")
+  demandeTransitions   DemandeTransition[]
+  prelevements         Prelevement[]          @relation("PrelevementAgent")
+  syncQueueItems       PrelevementSyncQueue[]
+  analysesSubmitted    AnalyseResultat[]      @relation("AnalyseSubmittedBy")
+  procesVerbaux        ProcesVerbal[]
+  amendementsRequested AnalyseAmendement[]    @relation("AmendementRequester")
+  amendementsDecided   AnalyseAmendement[]    @relation("AmendementDecider")
+  contreAnalyses       ContreAnalyse[]
+  certificatsIssued    Certificat[]           @relation("CertificatIssuer")
+  certTransitions      CertificatTransition[]
+  delegationsGiven     DelegationValidation[] @relation("DelegationDelegator")
+  delegationsReceived  DelegationValidation[] @relation("DelegationDelegue")
+  normesPublished      NormeReferentiel[]
+  grillesActivated     GrilleTarifaire[]
+  paiementsConfirmed   Paiement[]
+  recusIssued          Recu[]
+  documentsUploaded    Document[]
+  sieImports           SieImportHistory[]
+  signalementsAssigned Signalement[]
+  notifications        Notification[]
+  rapportsIntervention RapportIntervention[]
+
+  @@index([role, status])
+  @@index([communeId])
+  @@index([laboratoireId])
+  @@map("users")
+}
+
+model UserAuthCode {
+  id         String          @id @default(uuid())
+  userId     String?
+  phone      String
+  codeHash   String
+  purpose    AuthCodePurpose
+  attempts   Int             @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime        @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([phone, createdAt])
+  @@index([expiresAt])
+  @@map("user_auth_codes")
+}
+
+model TotpSecret {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  encryptedSecret String
+  iv              String
+  authTag         String
+  confirmedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("totp_secrets")
+}
+
+model BackupCode {
+  id        String    @id @default(uuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("backup_codes")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  familyId     String
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model UserCommuneScope {
+  id        String   @id @default(uuid())
+  userId    String
+  communeId Int
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  commune Commune @relation(fields: [communeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, communeId])
+  @@index([communeId])
+  @@map("user_commune_scopes")
+}
+
+// ───────────── RÉFÉRENTIEL GÉOGRAPHIQUE ─────────────
+
+model Region {
+  id       Int       @id @default(autoincrement())
+  code     String    @unique
+  name     String
+  communes Commune[]
+
+  @@map("regions")
+}
+
+model Commune {
+  id       Int     @id @default(autoincrement())
+  regionId Int
+  code     String? @unique
+  name     String
+
+  region        Region                @relation(fields: [regionId], references: [id])
+  users         User[]
+  userScopes    UserCommuneScope[]
+  ouvrages      Ouvrage[]
+  laboratoires  Laboratoire[]
+  organisations Organisation[]
+  signalements  Signalement[]
+  enveloppes    EnveloppeSubvention[]
+
+  @@index([regionId])
+  @@map("communes")
+}
+
+// ───────────── OUVRAGES & DOSSIER ─────────────
+
+model Ouvrage {
+  id             String        @id @default(uuid())
+  aquasafeNumber String        @unique
+  sieId          String?       @unique
+  type           OuvrageType
+  usage          OuvrageUsage  @default(DOMESTIQUE)
+  name           String
+  village        String?
+  communeId      Int
+  latitude       Float
+  longitude      Float
+  gpsAccuracyM   Int?
+  yearBuilt      Int?
+  status         OuvrageStatus @default(NON_ENREGISTRE_CERTIF)
+  isPublic       Boolean       @default(true)
+  ownerId        String?
+  builderOrgId   String?
+  lastControlAt  DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  commune      Commune                @relation(fields: [communeId], references: [id])
+  owner        User?                  @relation("OuvrageOwner", fields: [ownerId], references: [id])
+  builderOrg   Organisation?          @relation("OuvrageBuilderOrg", fields: [builderOrgId], references: [id])
+  dossier      DossierNumerique?
+  documents    Document[]
+  demandes     DemandeCertification[]
+  certificats  Certificat[]
+  signalements Signalement[]
+  rapports     RapportIntervention[]
+
+  @@index([communeId])
+  @@index([ownerId])
+  @@index([builderOrgId])
+  @@index([status])
+  @@index([type])
+  @@map("ouvrages")
+}
+
+model SieImportHistory {
+  id           String          @id @default(uuid())
+  uploadedById String
+  filename     String
+  dryRun       Boolean         @default(false)
+  status       SieImportStatus @default(RUNNING)
+  totalRows    Int             @default(0)
+  createdRows  Int             @default(0)
+  updatedRows  Int             @default(0)
+  skippedRows  Int             @default(0)
+  errorRows    Int             @default(0)
+  errorReport  Json            @default("[]")
+  startedAt    DateTime        @default(now())
+  finishedAt   DateTime?
+
+  uploadedBy User @relation(fields: [uploadedById], references: [id])
+
+  @@index([uploadedById])
+  @@map("sie_import_history")
+}
+
+model DossierNumerique {
+  id        String   @id @default(uuid())
+  ouvrageId String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ouvrage   Ouvrage    @relation(fields: [ouvrageId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@map("dossiers_numeriques")
+}
+
+model Document {
+  id            String       @id @default(uuid())
+  ouvrageId     String?
+  dossierId     String?
+  demandeId     String?
+  prelevementId String?
+  signalementId String?
+  subventionId  String?
+  rapportId     String?
+  kind          DocumentKind
+  objectKey     String       @unique
+  mimeType      String
+  sizeBytes     Int
+  sha256        String
+  originalName  String?
+  uploadedById  String?
+  createdAt     DateTime     @default(now())
+
+  ouvrage            Ouvrage?              @relation(fields: [ouvrageId], references: [id])
+  dossier            DossierNumerique?     @relation(fields: [dossierId], references: [id])
+  demande            DemandeCertification? @relation(fields: [demandeId], references: [id])
+  prelevement        Prelevement?          @relation("PrelevementDocuments", fields: [prelevementId], references: [id])
+  signalement        Signalement?          @relation(fields: [signalementId], references: [id])
+  subvention         Subvention?           @relation(fields: [subventionId], references: [id])
+  rapport            RapportIntervention?  @relation("RapportDocument", fields: [rapportId], references: [id])
+  uploadedBy         User?                 @relation(fields: [uploadedById], references: [id])
+  prelevementAsPhoto Prelevement?          @relation("PrelevementPhoto")
+  procesVerbal       ProcesVerbal?
+  certificatPlaque   Certificat?           @relation("CertificatPlaquePhoto")
+  certificatPdf      Certificat?           @relation("CertificatPdfDoc")
+  recuPdf            Recu?
+
+  @@index([ouvrageId])
+  @@index([dossierId])
+  @@index([demandeId])
+  @@index([signalementId])
+  @@map("documents")
+}
+
+// ───────────── CHAÎNE DE CERTIFICATION ─────────────
+
+model DemandeCertification {
+  id                String        @id @default(uuid())
+  reference         String        @unique
+  ouvrageId         String
+  type              DemandeType   @default(INITIALE)
+  status            DemandeStatus @default(BROUILLON)
+  applicantId       String
+  laboratoireId     String?
+  grilleLigneId     String?
+  tarifAmount       Int?
+  subventionAmount  Int           @default(0)
+  amountPaid        Int           @default(0)
+  submittedAt       DateTime?
+  validatedCommuneAt DateTime?
+  rejectedReason    String?
+  cancelledAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  ouvrage        Ouvrage               @relation(fields: [ouvrageId], references: [id])
+  applicant      User                  @relation("DemandeApplicant", fields: [applicantId], references: [id])
+  laboratoire    Laboratoire?          @relation(fields: [laboratoireId], references: [id])
+  grilleLigne    GrilleTarifaireLigne? @relation(fields: [grilleLigneId], references: [id])
+  transitions    DemandeTransition[]
+  paiements      Paiement[]
+  prelevements   Prelevement[]
+  syncQueueItems PrelevementSyncQueue[]
+  contreAnalyses ContreAnalyse[]
+  certificat     Certificat?
+  subvention     Subvention?
+  documents      Document[]
+
+  @@index([ouvrageId, status])
+  @@index([laboratoireId])
+  @@index([status])
+  @@map("demandes_certification")
+}
+
+model DemandeTransition {
+  id         String         @id @default(uuid())
+  demandeId  String
+  fromStatus DemandeStatus?
+  toStatus   DemandeStatus
+  reason     String?
+  actorId    String?
+  createdAt  DateTime       @default(now())
+
+  demande DemandeCertification @relation(fields: [demandeId], references: [id], onDelete: Cascade)
+  actor   User?                @relation(fields: [actorId], references: [id])
+
+  @@index([demandeId, createdAt])
+  @@map("demande_transitions")
+}
+
+model Laboratoire {
+  id                 String    @id @default(uuid())
+  name               String
+  agrementNumber     String    @unique
+  agrementValidUntil DateTime?
+  scopeAccreditation String[]
+  communeId          Int?
+  phone              String?
+  email              String?
+  isReferenced       Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  commune        Commune?               @relation(fields: [communeId], references: [id])
+  users          User[]
+  demandes       DemandeCertification[]
+  prelevements   Prelevement[]
+  analyses       AnalyseResultat[]
+  contreAnalyses ContreAnalyse[]
+
+  @@index([communeId])
+  @@index([isReferenced])
+  @@map("laboratoires")
+}
+
+model Prelevement {
+  id              String            @id @default(uuid())
+  clientUuid      String            @unique
+  demandeId       String
+  agentId         String
+  laboratoireId   String
+  bottleCode      String
+  collectedAt     DateTime
+  latitude        Float
+  longitude       Float
+  gpsAccuracyM    Int?
+  waterTempC      Float?
+  transportTempC  Float?
+  transportNotes  String?
+  status          PrelevementStatus @default(REALISE)
+  receivedAt      DateTime?
+  rejectionReason String?
+  photoDocumentId String?           @unique
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  demande       DemandeCertification @relation(fields: [demandeId], references: [id])
+  agent         User                 @relation("PrelevementAgent", fields: [agentId], references: [id])
+  laboratoire   Laboratoire          @relation(fields: [laboratoireId], references: [id])
+  photoDocument Document?            @relation("PrelevementPhoto", fields: [photoDocumentId], references: [id])
+  documents     Document[]           @relation("PrelevementDocuments")
+  analyse       AnalyseResultat?
+  contreAnalyse ContreAnalyse?       @relation("ContreAnalysePrelevement")
+
+  @@index([demandeId])
+  @@index([laboratoireId, status])
+  @@index([agentId])
+  @@map("prelevements")
+}
+
+model PrelevementSyncQueue {
+  id           String      @id @default(uuid())
+  clientUuid   String      @unique
+  demandeId    String
+  agentId      String
+  payload      Json
+  clientTs     DateTime
+  outcome      SyncOutcome
+  conflictInfo Json?
+  resolvedAt   DateTime?
+  createdAt    DateTime    @default(now())
+
+  demande DemandeCertification @relation(fields: [demandeId], references: [id])
+  agent   User                 @relation(fields: [agentId], references: [id])
+
+  @@index([demandeId])
+  @@index([agentId])
+  @@map("prelevement_sync_queue")
+}
+
+// ───────────── NORMES & ANALYSES ─────────────
+
+model NormeReferentiel {
+  id             String      @id @default(uuid())
+  code           String
+  version        String
+  status         NormeStatus @default(BROUILLON)
+  validityMonths Int?
+  publishedAt    DateTime?
+  publishedById  String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  publishedBy User?             @relation(fields: [publishedById], references: [id])
+  seuils      NormeSeuil[]
+  analyses    AnalyseResultat[]
+  certificats Certificat[]
+
+  @@unique([code, version])
+  @@index([status])
+  @@map("norme_referentiels")
+}
+
+model NormeSeuil {
+  id            String    @id @default(uuid())
+  referentielId String
+  parameterCode String
+  label         String
+  type          SeuilType
+  unit          String?
+  minValue      Float?
+  maxValue      Float?
+  isCritical    Boolean   @default(false)
+  isMandatory   Boolean   @default(true)
+
+  referentiel NormeReferentiel @relation(fields: [referentielId], references: [id], onDelete: Cascade)
+  valeurs     AnalyseValeur[]
+
+  @@unique([referentielId, parameterCode])
+  @@map("norme_seuils")
+}
+
+model AnalyseResultat {
+  id             String        @id @default(uuid())
+  prelevementId  String        @unique
+  laboratoireId  String
+  referentielId  String
+  status         AnalyseStatus @default(EN_SAISIE)
+  verdict        Verdict?
+  analystComment String?
+  analysedAt     DateTime?
+  submittedAt    DateTime?
+  submittedById  String?
+  version        Int           @default(1)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  prelevement           Prelevement         @relation(fields: [prelevementId], references: [id])
+  laboratoire           Laboratoire         @relation(fields: [laboratoireId], references: [id])
+  referentiel           NormeReferentiel    @relation(fields: [referentielId], references: [id])
+  submittedBy           User?               @relation("AnalyseSubmittedBy", fields: [submittedById], references: [id])
+  valeurs               AnalyseValeur[]
+  procesVerbal          ProcesVerbal?
+  amendements           AnalyseAmendement[]
+  contreAnalyseInitiale ContreAnalyse[]     @relation("ContreAnalyseInitiale")
+  contreAnalyseResultat ContreAnalyse?      @relation("ContreAnalyseResultat")
+
+  @@index([laboratoireId, status])
+  @@index([referentielId])
+  @@map("analyse_resultats")
+}
+
+model AnalyseValeur {
+  id            String   @id @default(uuid())
+  analyseId     String
+  seuilId       String
+  parameterCode String
+  value         Float?
+  presence      Boolean?
+  isCompliant   Boolean
+
+  analyse AnalyseResultat @relation(fields: [analyseId], references: [id], onDelete: Cascade)
+  seuil   NormeSeuil      @relation(fields: [seuilId], references: [id])
+
+  @@unique([analyseId, parameterCode])
+  @@map("analyse_valeurs")
+}
+
+model ProcesVerbal {
+  id           String   @id @default(uuid())
+  analyseId    String   @unique
+  documentId   String   @unique
+  sha256       String
+  receivedAt   DateTime @default(now())
+  uploadedById String
+
+  analyse    AnalyseResultat @relation(fields: [analyseId], references: [id])
+  document   Document        @relation(fields: [documentId], references: [id])
+  uploadedBy User            @relation(fields: [uploadedById], references: [id])
+
+  @@map("proces_verbaux")
+}
+
+model AnalyseAmendement {
+  id             String           @id @default(uuid())
+  analyseId      String
+  requestedById  String
+  reason         String
+  changes        Json
+  status         AmendementStatus @default(EN_ATTENTE)
+  decidedById    String?
+  decisionReason String?
+  decidedAt      DateTime?
+  createdAt      DateTime         @default(now())
+
+  analyse     AnalyseResultat @relation(fields: [analyseId], references: [id])
+  requestedBy User            @relation("AmendementRequester", fields: [requestedById], references: [id])
+  decidedBy   User?           @relation("AmendementDecider", fields: [decidedById], references: [id])
+
+  @@index([analyseId, status])
+  @@map("analyse_amendements")
+}
+
+model ContreAnalyse {
+  id               String              @id @default(uuid())
+  demandeId        String
+  initialAnalyseId String
+  laboratoireId    String?
+  payeur           ContreAnalysePayeur
+  status           ContreAnalyseStatus @default(OUVERTE)
+  newPrelevementId String?             @unique
+  newAnalyseId     String?             @unique
+  requestedById    String
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  demande        DemandeCertification @relation(fields: [demandeId], references: [id])
+  initialAnalyse AnalyseResultat      @relation("ContreAnalyseInitiale", fields: [initialAnalyseId], references: [id])
+  laboratoire    Laboratoire?         @relation(fields: [laboratoireId], references: [id])
+  newPrelevement Prelevement?         @relation("ContreAnalysePrelevement", fields: [newPrelevementId], references: [id])
+  newAnalyse     AnalyseResultat?     @relation("ContreAnalyseResultat", fields: [newAnalyseId], references: [id])
+  requestedBy    User                 @relation(fields: [requestedById], references: [id])
+
+  @@index([demandeId])
+  @@map("contre_analyses")
+}
+
+// ───────────── CERTIFICATS & QR ─────────────
+
+model Certificat {
+  id                String           @id @default(uuid())
+  number            String           @unique
+  ouvrageId         String
+  demandeId         String           @unique
+  referentielId     String
+  status            CertificatStatus @default(EMIS)
+  issuedAt          DateTime         @default(now())
+  issuedById        String
+  validFrom         DateTime?
+  validUntil        DateTime?
+  replacedById      String?          @unique
+  plaquePhotoDocId  String?          @unique
+  pdfDocumentId     String?          @unique
+  plaqueConfirmedAt DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  ouvrage        Ouvrage                @relation(fields: [ouvrageId], references: [id])
+  demande        DemandeCertification   @relation(fields: [demandeId], references: [id])
+  referentiel    NormeReferentiel       @relation(fields: [referentielId], references: [id])
+  issuedBy       User                   @relation("CertificatIssuer", fields: [issuedById], references: [id])
+  replacedBy     Certificat?            @relation("CertificatReplacement", fields: [replacedById], references: [id])
+  replaces       Certificat?            @relation("CertificatReplacement")
+  plaquePhotoDoc Document?              @relation("CertificatPlaquePhoto", fields: [plaquePhotoDocId], references: [id])
+  pdfDocument    Document?              @relation("CertificatPdfDoc", fields: [pdfDocumentId], references: [id])
+  qrToken        QrToken?
+  transitions    CertificatTransition[]
+
+  @@index([ouvrageId, status])
+  @@index([status, validUntil])
+  @@map("certificats")
+}
+
+model QrToken {
+  id           String        @id @default(uuid())
+  token        String        @unique
+  certificatId String        @unique
+  status       QrTokenStatus @default(ACTIVE)
+  revokedAt    DateTime?
+  createdAt    DateTime      @default(now())
+
+  certificat Certificat @relation(fields: [certificatId], references: [id], onDelete: Cascade)
+
+  @@map("qr_tokens")
+}
+
+model CertificatTransition {
+  id           String            @id @default(uuid())
+  certificatId String
+  fromStatus   CertificatStatus?
+  toStatus     CertificatStatus
+  reason       String
+  actorId      String?
+  createdAt    DateTime          @default(now())
+
+  certificat Certificat @relation(fields: [certificatId], references: [id], onDelete: Cascade)
+  actor      User?      @relation(fields: [actorId], references: [id])
+
+  @@index([certificatId, createdAt])
+  @@map("certificat_transitions")
+}
+
+model DelegationValidation {
+  id          String    @id @default(uuid())
+  delegatorId String
+  delegueId   String
+  validFrom   DateTime
+  validUntil  DateTime
+  reason      String
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  delegator User @relation("DelegationDelegator", fields: [delegatorId], references: [id])
+  delegue   User @relation("DelegationDelegue", fields: [delegueId], references: [id])
+
+  @@index([delegueId, validFrom, validUntil])
+  @@map("delegations_validation")
+}
+
+// ───────────── FINANCE & SUBVENTIONS ─────────────
+
+model GrilleTarifaire {
+  id            String       @id @default(uuid())
+  name          String
+  version       Int          @default(1)
+  status        GrilleStatus @default(BROUILLON)
+  activatedAt   DateTime?
+  activatedById String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  activatedBy User?                  @relation(fields: [activatedById], references: [id])
+  lignes      GrilleTarifaireLigne[]
+
+  @@index([status])
+  @@map("grilles_tarifaires")
+}
+
+model GrilleTarifaireLigne {
+  id          String       @id @default(uuid())
+  grilleId    String
+  ouvrageType OuvrageType
+  usage       OuvrageUsage
+  amount      Int
+
+  grille   GrilleTarifaire        @relation(fields: [grilleId], references: [id], onDelete: Cascade)
+  demandes DemandeCertification[]
+
+  @@unique([grilleId, ouvrageType, usage])
+  @@map("grille_tarifaire_lignes")
+}
+
+model Paiement {
+  id             String         @id @default(uuid())
+  demandeId      String
+  amount         Int
+  canal          PaiementCanal
+  reference      String
+  status         PaiementStatus @default(DECLARE)
+  idempotencyKey String?        @unique
+  paidAt         DateTime?
+  confirmedAt    DateTime?
+  confirmedById  String?
+  rejectedReason String?
+  createdAt      DateTime       @default(now())
+
+  demande     DemandeCertification @relation(fields: [demandeId], references: [id])
+  confirmedBy User?                @relation(fields: [confirmedById], references: [id])
+  recu        Recu?
+
+  @@unique([canal, reference])
+  @@index([demandeId, status])
+  @@map("paiements")
+}
+
+model Recu {
+  id           String   @id @default(uuid())
+  number       String   @unique
+  paiementId   String   @unique
+  amount       Int
+  balanceAfter Int
+  documentId   String?  @unique
+  issuedAt     DateTime @default(now())
+  issuedById   String
+
+  paiement Paiement  @relation(fields: [paiementId], references: [id])
+  document Document? @relation(fields: [documentId], references: [id])
+  issuedBy User      @relation(fields: [issuedById], references: [id])
+
+  @@map("recus")
+}
+
+model EnveloppeSubvention {
+  id        String   @id @default(uuid())
+  financeur String
+  total     Int
+  consumed  Int      @default(0)
+  communeId Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  commune     Commune?     @relation(fields: [communeId], references: [id])
+  subventions Subvention[]
+
+  @@index([communeId])
+  @@map("enveloppes_subvention")
+}
+
+model Subvention {
+  id          String           @id @default(uuid())
+  demandeId   String           @unique
+  enveloppeId String?
+  status      SubventionStatus @default(SOUMISE)
+  eligible    Boolean?
+  criterion   String?
+  communeNote String?
+  amount      Int              @default(0)
+  mineeReason String?
+  decidedAt   DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  demande       DemandeCertification @relation(fields: [demandeId], references: [id])
+  enveloppe     EnveloppeSubvention? @relation(fields: [enveloppeId], references: [id])
+  justificatifs Document[]
+
+  @@index([status])
+  @@map("subventions")
+}
+
+// ───────────── SIGNALEMENTS, NOTIFICATIONS & ACTEURS ─────────────
+
+model Signalement {
+  id             String               @id @default(uuid())
+  trackingNumber String               @unique
+  clientUuid     String?              @unique
+  ouvrageId      String?
+  communeId      Int?
+  category       SignalementCategorie
+  severity       Int                  @default(1)
+  description    String?
+  latitude       Float?
+  longitude      Float?
+  qrToken        String?
+  contactPhone   String?
+  ipHash         String?
+  status         SignalementStatus    @default(RECU)
+  resolutionNote String?
+  assignedToId   String?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  ouvrage    Ouvrage?   @relation(fields: [ouvrageId], references: [id])
+  commune    Commune?   @relation(fields: [communeId], references: [id])
+  assignedTo User?      @relation(fields: [assignedToId], references: [id])
+  photos     Document[]
+
+  @@index([communeId, status])
+  @@index([ipHash, createdAt])
+  @@map("signalements")
+}
+
+model Notification {
+  id             String              @id @default(uuid())
+  userId         String?
+  channel        NotificationChannel
+  recipient      String
+  templateCode   String
+  payload        Json
+  status         NotificationStatus  @default(PENDING)
+  attempts       Int                 @default(0)
+  nextAttemptAt  DateTime            @default(now())
+  idempotencyKey String?             @unique
+  readAt         DateTime?
+  sentAt         DateTime?
+  lastError      String?
+  createdAt      DateTime            @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model Organisation {
+  id           String           @id @default(uuid())
+  name         String
+  type         OrganisationType
+  phone        String?
+  email        String?
+  communeId    Int?
+  isReferenced Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+
+  commune       Commune?              @relation(fields: [communeId], references: [id])
+  users         User[]
+  ouvragesBuilt Ouvrage[]             @relation("OuvrageBuilderOrg")
+  rapports      RapportIntervention[]
+
+  @@index([type])
+  @@map("organisations")
+}
+
+model RapportIntervention {
+  id             String    @id @default(uuid())
+  ouvrageId      String
+  organisationId String?
+  submittedById  String
+  summary        String?
+  treatedAt      DateTime?
+  documentId     String?
+  createdAt      DateTime  @default(now())
+
+  ouvrage      Ouvrage       @relation(fields: [ouvrageId], references: [id])
+  organisation Organisation? @relation(fields: [organisationId], references: [id])
+  submittedBy  User          @relation(fields: [submittedById], references: [id])
+  documents    Document[]    @relation("RapportDocument")
+
+  @@index([ouvrageId])
+  @@map("rapports_intervention")
+}
+
+// ───────────── AUDIT & PARAMÈTRES SYSTÈME ─────────────
+
+model AuditLog {
+  seq        BigInt   @id @default(autoincrement())
+  ts         DateTime @default(now()) @db.Timestamptz(6)
+  actorId    String?
+  actorRole  Role?
+  action     String
+  entityType String
+  entityId   String
+  reason     String?
+  before     Json?
+  after      Json?
+  ip         String?
+  prevHash   String
+  hash       String
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([ts])
+  @@map("audit_log")
+}
+
+model SystemParameter {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_parameters")
+}
